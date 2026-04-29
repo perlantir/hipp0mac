@@ -35,7 +35,7 @@ final class AppStore {
 
   private let client: DaemonClient
   private let credentialStore: ProviderCredentialStore
-  private var eventStreamTask: Swift.Task<Void, Never>?
+  private var eventStreamTask: Task<Void, Never>?
 
   init(client: DaemonClient, credentialStore: ProviderCredentialStore = ProviderCredentialStore()) {
     self.client = client
@@ -47,11 +47,11 @@ final class AppStore {
       return
     }
 
-    eventStreamTask = Swift.Task {
+    eventStreamTask = Task {
       await listenForEvents()
     }
 
-    Swift.Task {
+    Task {
       await refreshHealth()
       await refreshTasks()
       await refreshProviders()
