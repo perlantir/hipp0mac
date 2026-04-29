@@ -111,5 +111,5 @@ Earlier CI failure recorded and fixed:
 
 - Complete the remaining Phase 5B crash/soak/manual audit gate evidence
   before declaring Phase 5B done.
-- Update this sign-off with PR link and three consecutive GitHub Actions
-  run URLs after CI is exercised.
+- Keep CI evidence refreshed if additional implementation commits are added
+  before human review.
