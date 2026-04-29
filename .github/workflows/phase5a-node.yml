@@ -1,6 +1,7 @@
 name: Phase 5A Node Persistence
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -9,7 +10,7 @@ on:
 
 jobs:
   node-and-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
