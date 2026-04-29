@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import OperatorDockCore
 
 struct WorkspaceScreen: View {
   @Bindable var store: AppStore
@@ -13,7 +15,7 @@ struct WorkspaceScreen: View {
           leftPane
             .frame(width: 320)
 
-          centerPane
+          FileExplorerPanel(store: store)
             .frame(maxWidth: .infinity)
 
           inspectorPane
@@ -48,20 +50,20 @@ struct WorkspaceScreen: View {
       StatusBadge(status: .running, compact: true)
 
       VStack(alignment: .leading, spacing: 3) {
-        Text("Pull Q2 churn cohorts from Mixpanel")
+        Text("Local Operator Dock workspace")
           .font(.odText(13.5, weight: .medium))
           .foregroundStyle(ODTheme.ColorToken.textPrimary)
 
-        Text("Inspecting pricing page...")
+        Text("Workspace writes are bounded; outside mutations require approval.")
           .font(.odText(11.5))
           .foregroundStyle(ODTheme.ColorToken.textTertiary)
       }
 
       Spacer()
 
-      WorkspaceMetric(label: "Model", value: "Auto")
-      WorkspaceMetric(label: "Runtime", value: "04:12")
-      WorkspaceMetric(label: "Cost", value: "$0.84")
+        WorkspaceMetric(label: "Boundary", value: "On")
+        WorkspaceMetric(label: "Logs", value: "Raw")
+        WorkspaceMetric(label: "Events", value: "Live")
 
       Button {
         showApproval = true
@@ -86,67 +88,29 @@ struct WorkspaceScreen: View {
 
   private var leftPane: some View {
     VStack(alignment: .leading, spacing: 14) {
-      HStack(spacing: 6) {
-        WorkspaceSegment(title: "Chat", active: true)
-        WorkspaceSegment(title: "Plan")
-        WorkspaceSegment(title: "Timeline")
+      SectionLabel(title: "Workspace folders")
+
+      VStack(spacing: 8) {
+        WorkspaceFolderRow(title: "Projects", path: store.workspace?.folders.projects)
+        WorkspaceFolderRow(title: "Tasks", path: store.workspace?.folders.tasks)
+        WorkspaceFolderRow(title: "Artifacts", path: store.workspace?.folders.artifacts)
+        WorkspaceFolderRow(title: "Logs", path: store.workspace?.folders.logs)
+        WorkspaceFolderRow(title: "Skills", path: store.workspace?.folders.skills)
+        WorkspaceFolderRow(title: "Memory", path: store.workspace?.folders.memory)
       }
+      .padding(14)
+      .odCard()
 
-      StepTimelineCard(steps: SampleData.planSteps)
-    }
-  }
-
-  private var centerPane: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        WorkspaceSegment(title: "Browser", active: true)
-        WorkspaceSegment(title: "Terminal")
-        WorkspaceSegment(title: "Preview")
-        Spacer()
+      SectionLabel(title: "Safety")
+      VStack(alignment: .leading, spacing: 10) {
+        Label("Writes default to workspace only", systemImage: "lock.shield")
+        Label("Deletes outside workspace require approval", systemImage: "checkmark.shield")
+        Label("System directory deletion is blocked", systemImage: "nosign")
       }
-
-      VStack(alignment: .leading, spacing: 18) {
-        HStack {
-          Text("https://mixpanel.com/project/cohorts")
-            .font(.odMono(11.5))
-            .foregroundStyle(ODTheme.ColorToken.textTertiary)
-            .padding(.horizontal, 12)
-            .frame(height: 32)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ODTheme.ColorToken.canvas)
-            .clipShape(Capsule())
-        }
-
-        VStack(alignment: .leading, spacing: 14) {
-          Text("Cohort retention by pricing experiment")
-            .font(.odText(15, weight: .semibold))
-            .foregroundStyle(ODTheme.ColorToken.textPrimary)
-
-          HStack(alignment: .bottom, spacing: 10) {
-            ForEach([0.72, 0.58, 0.64, 0.49, 0.41, 0.36, 0.31], id: \.self) { value in
-              RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(ODTheme.ColorToken.accent.opacity(0.75))
-                .frame(height: 220 * value)
-            }
-          }
-          .frame(maxWidth: .infinity, minHeight: 230, alignment: .bottom)
-          .padding(18)
-          .background(ODTheme.ColorToken.canvas)
-          .clipShape(RoundedRectangle(cornerRadius: ODTheme.Radius.xl, style: .continuous))
-
-          Text("Click Export CSV")
-            .font(.odText(11.5, weight: .medium))
-            .foregroundStyle(ODTheme.ColorToken.textPrimary)
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(ODTheme.ColorToken.accent)
-            .clipShape(Capsule())
-        }
-
-        Spacer()
-      }
-      .padding(18)
-      .odCard(fill: ODTheme.ColorToken.surface)
+      .font(.odText(11.5, weight: .medium))
+      .foregroundStyle(ODTheme.ColorToken.textSecondary)
+      .padding(14)
+      .odCard()
     }
   }
 
@@ -208,6 +172,221 @@ struct WorkspaceScreen: View {
   }
 }
 
+private struct FileExplorerPanel: View {
+  @Bindable var store: AppStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 8) {
+        WorkspaceSegment(title: "Files", active: true)
+        Spacer()
+        PillButton(title: "Root", systemImage: "arrow.up.left", style: .secondary) {
+          Task {
+            await store.goToWorkspaceRoot()
+          }
+        }
+        PillButton(title: "Choose workspace", systemImage: "folder.badge.gearshape", style: .primary) {
+          chooseWorkspace()
+        }
+      }
+
+      VStack(alignment: .leading, spacing: 14) {
+        workspaceHeader
+
+        Divider()
+          .overlay(ODTheme.ColorToken.border)
+
+        if store.workspace == nil {
+          VStack(spacing: 12) {
+            Image(systemName: "folder.badge.questionmark")
+              .font(.system(size: 34, weight: .medium))
+              .foregroundStyle(ODTheme.ColorToken.textMuted)
+
+            Text("Choose an Operator Dock workspace folder")
+              .font(.odText(14, weight: .semibold))
+              .foregroundStyle(ODTheme.ColorToken.textPrimary)
+
+            Text("Operator Dock will create projects, tasks, artifacts, logs, skills, and memory folders inside it.")
+              .font(.odText(12))
+              .foregroundStyle(ODTheme.ColorToken.textTertiary)
+              .multilineTextAlignment(.center)
+
+            PillButton(title: "Choose folder", systemImage: "folder", style: .primary) {
+              chooseWorkspace()
+            }
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .padding(32)
+        } else {
+          fileList
+        }
+      }
+      .padding(18)
+      .odCard(fill: ODTheme.ColorToken.surface)
+    }
+    .task {
+      await store.refreshWorkspace()
+    }
+  }
+
+  private var workspaceHeader: some View {
+    HStack(spacing: 12) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(store.fileExplorerPath == "." ? "Workspace root" : store.fileExplorerPath)
+          .font(.odText(15, weight: .semibold))
+          .foregroundStyle(ODTheme.ColorToken.textPrimary)
+
+        Text(store.workspace?.rootPath ?? "No workspace configured")
+          .font(.odMono(11.5))
+          .foregroundStyle(ODTheme.ColorToken.textTertiary)
+          .lineLimit(1)
+      }
+
+      Spacer()
+
+      if let workspace = store.workspace {
+        Text(workspace.initialized ? "Initialized" : "Not initialized")
+          .font(.odText(11.5, weight: .medium))
+          .foregroundStyle(workspace.initialized ? ODTheme.ColorToken.success : ODTheme.ColorToken.waiting)
+          .padding(.horizontal, 9)
+          .frame(height: 24)
+          .background((workspace.initialized ? ODTheme.ColorToken.success : ODTheme.ColorToken.waiting).opacity(0.12))
+          .clipShape(Capsule())
+      }
+    }
+  }
+
+  private var fileList: some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text("Name")
+          .frame(maxWidth: .infinity, alignment: .leading)
+        Text("Kind")
+          .frame(width: 90, alignment: .leading)
+        Text("Size")
+          .frame(width: 90, alignment: .trailing)
+      }
+      .font(.odText(11, weight: .semibold))
+      .foregroundStyle(ODTheme.ColorToken.textMuted)
+      .textCase(.uppercase)
+      .padding(.horizontal, 12)
+      .padding(.bottom, 8)
+
+      ScrollView {
+        VStack(spacing: 4) {
+          ForEach(store.workspaceFiles) { entry in
+            FileExplorerRow(entry: entry) {
+              Task {
+                await store.openFileExplorerFolder(entry)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func chooseWorkspace() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = "Choose Workspace"
+    panel.message = "Choose the folder where Operator Dock should manage local projects, tasks, artifacts, logs, skills, and memory."
+
+    if panel.runModal() == .OK, let url = panel.url {
+      Task {
+        await store.configureWorkspace(rootPath: url.path)
+      }
+    }
+  }
+}
+
+private struct WorkspaceFolderRow: View {
+  let title: String
+  let path: String?
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Image(systemName: "folder")
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(ODTheme.ColorToken.accent)
+        .frame(width: 18)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .font(.odText(12, weight: .medium))
+          .foregroundStyle(ODTheme.ColorToken.textPrimary)
+
+        Text(path ?? "Not configured")
+          .font(.odMono(10.5))
+          .foregroundStyle(ODTheme.ColorToken.textMuted)
+          .lineLimit(1)
+      }
+
+      Spacer()
+    }
+  }
+}
+
+private struct FileExplorerRow: View {
+  let entry: FileEntry
+  let open: () -> Void
+
+  var body: some View {
+    Button(action: open) {
+      HStack(spacing: 12) {
+        Image(systemName: entry.kind == .directory ? "folder" : "doc.text")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(entry.kind == .directory ? ODTheme.ColorToken.accent : ODTheme.ColorToken.textTertiary)
+          .frame(width: 20)
+
+        VStack(alignment: .leading, spacing: 3) {
+          Text(entry.name)
+            .font(.odText(12.5, weight: .medium))
+            .foregroundStyle(ODTheme.ColorToken.textPrimary)
+            .lineLimit(1)
+
+          Text(entry.relativePath)
+            .font(.odText(10.5))
+            .foregroundStyle(ODTheme.ColorToken.textMuted)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Text(entry.kind.rawValue)
+          .font(.odText(11.5))
+          .foregroundStyle(ODTheme.ColorToken.textTertiary)
+          .frame(width: 90, alignment: .leading)
+
+        Text(fileSize)
+          .font(.odMono(11))
+          .foregroundStyle(ODTheme.ColorToken.textMuted)
+          .frame(width: 90, alignment: .trailing)
+      }
+      .padding(.horizontal, 12)
+      .frame(height: 48)
+      .background(ODTheme.ColorToken.canvas.opacity(0.35))
+      .clipShape(RoundedRectangle(cornerRadius: ODTheme.Radius.lg, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .disabled(entry.kind != .directory)
+  }
+
+  private var fileSize: String {
+    guard let size = entry.size else {
+      return "-"
+    }
+
+    if size < 1024 {
+      return "\(size) B"
+    }
+
+    return "\(size / 1024) KB"
+  }
+}
+
 private struct WorkspaceMetric: View {
   let label: String
   let value: String
@@ -240,4 +419,3 @@ private struct WorkspaceSegment: View {
       .clipShape(Capsule())
   }
 }
-

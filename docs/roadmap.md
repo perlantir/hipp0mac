@@ -126,3 +126,31 @@ Tests:
 - Unit tests for provider config validation.
 - Mock provider tests for `ModelRouter`.
 - UI test for adding/testing provider.
+
+## Phase 3 - Local Workspace and Enterprise File Tools
+
+Status: implemented.
+
+Goal: replace basic file tooling with production-grade local workspace and file infrastructure.
+
+Implemented:
+
+- User-selectable Operator Dock workspace folder.
+- Required workspace folders: `projects`, `tasks`, `artifacts`, `logs`, `skills`, and `memory`.
+- Workspace settings persisted locally.
+- File permission boundary system.
+- `fs.read`, `fs.write`, `fs.append`, `fs.list`, `fs.search`, `fs.copy`, `fs.move`, and `fs.delete`.
+- Structured tool events: `tool.started`, `tool.output`, `tool.completed`, `tool.failed`, and `approval.required`.
+- Safety checks for write/delete outside the workspace.
+- System directory delete blocking.
+- Raw file operation logs.
+- File explorer in Workspace UI.
+
+Tests:
+
+- Workspace creation.
+- Project folder creation.
+- File read/write/list/search.
+- Blocked unsafe delete.
+- Approval required outside workspace.
+- Event emission.

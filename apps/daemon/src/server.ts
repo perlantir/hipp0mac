@@ -17,7 +17,13 @@ import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/
 import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
 import { registerProviderRoutes } from "./providers/routes.js";
 import { TaskRepository } from "./tasks/taskRepository.js";
+import { FileOperationLogger } from "./tools/fs/fileOperationLogger.js";
+import { FsToolService } from "./tools/fs/fsToolService.js";
+import { ToolEventStore } from "./tools/runtime/toolEventStore.js";
 import { EventBus, registerEventRoutes } from "./websocket/eventBus.js";
+import { registerWorkspaceRoutes } from "./workspace/routes.js";
+import { WorkspaceSettingsRepository } from "./workspace/workspaceSettingsRepository.js";
+import { WorkspaceService } from "./workspace/workspaceService.js";
 
 export interface BuildAppOptions {
   config?: DaemonConfig;
@@ -41,6 +47,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
 
   const tasks = new TaskRepository(database);
   const providerSettings = new ProviderSettingsRepository(database);
+  const workspace = new WorkspaceService(new WorkspaceSettingsRepository(database));
+  const toolEvents = new ToolEventStore(database, eventBus);
+  const fileLogger = new FileOperationLogger(database);
+  const fsTools = new FsToolService(workspace, toolEvents, fileLogger);
   const app = Fastify({
     logger: options.logger ?? true
   });
@@ -131,6 +141,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await registerProviderRoutes(app, {
     settings: providerSettings,
     credentialStore
+  });
+  await registerWorkspaceRoutes(app, {
+    workspace,
+    fsTools
   });
 
   return app;

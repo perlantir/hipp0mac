@@ -84,6 +84,32 @@ public struct DaemonClient: Sendable {
     return response.router
   }
 
+  public func workspace() async throws -> WorkspaceSettings {
+    let response: WorkspaceResponse = try await get("/v1/workspace")
+    return response.workspace
+  }
+
+  public func configureWorkspace(rootPath: String) async throws -> WorkspaceSettings {
+    let response: WorkspaceResponse = try await put(
+      "/v1/workspace",
+      body: WorkspaceConfigureRequest(rootPath: rootPath)
+    )
+    return response.workspace
+  }
+
+  public func listWorkspaceFiles(path: String = ".", recursive: Bool = false) async throws -> [FileEntry] {
+    var components = URLComponents(url: endpoint("/v1/workspace/files"), resolvingAgainstBaseURL: false)!
+    components.queryItems = [
+      URLQueryItem(name: "path", value: path),
+      URLQueryItem(name: "recursive", value: recursive ? "true" : "false")
+    ]
+
+    var request = URLRequest(url: components.url!)
+    request.httpMethod = "GET"
+    let response: FileListResponse = try await send(request)
+    return response.entries
+  }
+
   public func events() -> AsyncThrowingStream<OperatorEvent, Error> {
     AsyncThrowingStream { continuation in
       let task = session.webSocketTask(with: webSocketURL)

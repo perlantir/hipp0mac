@@ -51,3 +51,16 @@ The daemon exposes provider setup endpoints under `/v1/providers` and model-rout
 - Tool-call style response normalization where the provider exposes tool calls.
 
 Streaming capability is tracked per model in protocol metadata and reserved in the router adapter interface for the execution layer that will consume streams.
+
+## Local Workspace And File Tools
+
+The daemon owns workspace initialization and persists workspace settings in SQLite's `settings` table. A configured workspace creates the following managed folders:
+
+- `projects`
+- `tasks`
+- `artifacts`
+- `logs`
+- `skills`
+- `memory`
+
+File writes and deletes default to the configured workspace boundary. Outside-workspace writes/deletes return an approval-required result unless an approved execution token is supplied by the tool runtime. Deletes targeting system directories are blocked outright. Every file operation writes a raw audit record to `file_operation_logs` and emits structured tool events.

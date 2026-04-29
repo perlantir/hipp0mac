@@ -275,6 +275,215 @@ export const ModelRouterChatResponseSchema = z.object({
   }).default({})
 });
 
+export const WorkspaceFoldersSchema = z.object({
+  projects: z.string(),
+  tasks: z.string(),
+  artifacts: z.string(),
+  logs: z.string(),
+  skills: z.string(),
+  memory: z.string()
+});
+
+export const WorkspaceSettingsSchema = z.object({
+  rootPath: z.string().min(1),
+  folders: WorkspaceFoldersSchema,
+  initialized: z.boolean(),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema
+});
+
+export const WorkspaceConfigureInputSchema = z.object({
+  rootPath: z.string().trim().min(1)
+});
+
+export const WorkspaceResponseSchema = z.object({
+  workspace: WorkspaceSettingsSchema
+});
+
+export const ProjectFolderCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
+
+export const FileEntryKindSchema = z.enum(["file", "directory"]);
+
+export const FileEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  relativePath: z.string(),
+  kind: FileEntryKindSchema,
+  size: z.number().int().nonnegative().optional(),
+  modifiedAt: isoDateTimeSchema.optional()
+});
+
+export const FileListResponseSchema = z.object({
+  entries: z.array(FileEntrySchema)
+});
+
+export const FileReadInputSchema = z.object({
+  path: z.string().trim().min(1),
+  encoding: z.literal("utf8").default("utf8"),
+  maxBytes: z.number().int().positive().max(5_000_000).default(1_000_000)
+});
+
+export const FileReadOutputSchema = z.object({
+  path: z.string(),
+  relativePath: z.string(),
+  content: z.string(),
+  bytesRead: z.number().int().nonnegative()
+});
+
+export const FileWriteInputSchema = z.object({
+  path: z.string().trim().min(1),
+  content: z.string(),
+  createDirs: z.boolean().default(true),
+  overwrite: z.boolean().default(true),
+  approvalToken: z.string().optional()
+});
+
+export const FileAppendInputSchema = z.object({
+  path: z.string().trim().min(1),
+  content: z.string(),
+  createDirs: z.boolean().default(true),
+  approvalToken: z.string().optional()
+});
+
+export const FileListInputSchema = z.object({
+  path: z.string().trim().min(1).default("."),
+  recursive: z.boolean().default(false),
+  maxEntries: z.number().int().positive().max(1000).default(200)
+});
+
+export const FileSearchInputSchema = z.object({
+  path: z.string().trim().min(1).default("."),
+  query: z.string().min(1),
+  maxResults: z.number().int().positive().max(1000).default(100)
+});
+
+export const FileSearchMatchSchema = z.object({
+  path: z.string(),
+  relativePath: z.string(),
+  line: z.number().int().positive(),
+  preview: z.string()
+});
+
+export const FileSearchOutputSchema = z.object({
+  matches: z.array(FileSearchMatchSchema)
+});
+
+export const FileCopyInputSchema = z.object({
+  from: z.string().trim().min(1),
+  to: z.string().trim().min(1),
+  overwrite: z.boolean().default(false),
+  approvalToken: z.string().optional()
+});
+
+export const FileMoveInputSchema = z.object({
+  from: z.string().trim().min(1),
+  to: z.string().trim().min(1),
+  overwrite: z.boolean().default(false),
+  approvalToken: z.string().optional()
+});
+
+export const FileDeleteInputSchema = z.object({
+  path: z.string().trim().min(1),
+  recursive: z.boolean().default(false),
+  approvalToken: z.string().optional()
+});
+
+export const FileMutationOutputSchema = z.object({
+  path: z.string(),
+  relativePath: z.string(),
+  bytesWritten: z.number().int().nonnegative().optional()
+});
+
+export const ToolRiskLevelSchema = z.enum(["safe", "medium", "dangerous"]);
+
+export const ToolExecutionStatusSchema = z.enum([
+  "pending",
+  "running",
+  "waiting_for_approval",
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out"
+]);
+
+export const ToolEventTypeSchema = z.enum([
+  "tool.started",
+  "tool.output",
+  "tool.completed",
+  "tool.failed",
+  "tool.cancelled",
+  "approval.required"
+]);
+
+export const ToolErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  details: jsonObjectSchema.optional()
+});
+
+export const ToolReplayMetadataSchema = z.object({
+  inputHash: z.string(),
+  workspaceRoot: z.string().optional(),
+  startedAt: isoDateTimeSchema,
+  completedAt: isoDateTimeSchema.optional(),
+  attempts: z.number().int().positive().default(1)
+});
+
+export const ToolEventRecordSchema = z.object({
+  id: idSchema,
+  executionId: idSchema,
+  toolName: z.string().min(1),
+  type: ToolEventTypeSchema,
+  createdAt: isoDateTimeSchema,
+  payload: jsonObjectSchema.default({})
+});
+
+export const ToolResultSchema = z.object({
+  executionId: idSchema,
+  toolName: z.string().min(1),
+  status: ToolExecutionStatusSchema,
+  riskLevel: ToolRiskLevelSchema,
+  ok: z.boolean(),
+  output: jsonValueSchema.optional(),
+  error: ToolErrorSchema.optional(),
+  rawOutputRef: z.string().optional(),
+  events: z.array(ToolEventRecordSchema).default([]),
+  replay: ToolReplayMetadataSchema
+});
+
+export const ToolExecutionRequestSchema = z.object({
+  toolName: z.string().trim().min(1),
+  input: jsonObjectSchema,
+  timeoutMs: z.number().int().positive().max(120_000).optional(),
+  retry: z.number().int().nonnegative().max(3).default(0),
+  approvalToken: z.string().optional()
+});
+
+export const ToolExecutionResponseSchema = z.object({
+  result: ToolResultSchema
+});
+
+export const ApprovalDecisionInputSchema = z.object({
+  executionId: idSchema,
+  approved: z.boolean()
+});
+
+export const ShellRunInputSchema = z.object({
+  command: z.string().trim().min(1),
+  cwd: z.string().trim().min(1).optional(),
+  env: z.record(z.string()).default({}),
+  timeoutMs: z.number().int().positive().max(120_000).default(30_000),
+  approvalToken: z.string().optional()
+});
+
+export const ShellRunOutputSchema = z.object({
+  exitCode: z.number().int().nullable(),
+  stdout: z.string(),
+  stderr: z.string()
+});
+
 const EventBaseSchema = z.object({
   id: idSchema,
   occurredAt: isoDateTimeSchema
@@ -336,6 +545,13 @@ export const ArtifactCreatedEventSchema = EventBaseSchema.extend({
   })
 });
 
+export const ToolRuntimeEventSchema = EventBaseSchema.extend({
+  type: ToolEventTypeSchema,
+  payload: z.object({
+    event: ToolEventRecordSchema
+  })
+});
+
 export const OperatorEventSchema = z.discriminatedUnion("type", [
   TaskCreatedEventSchema,
   TaskUpdatedEventSchema,
@@ -344,7 +560,8 @@ export const OperatorEventSchema = z.discriminatedUnion("type", [
   ToolCallUpdatedEventSchema,
   ApprovalRequestedEventSchema,
   ApprovalResolvedEventSchema,
-  ArtifactCreatedEventSchema
+  ArtifactCreatedEventSchema,
+  ToolRuntimeEventSchema
 ]);
 
 export const HealthResponseSchema = z.object({
@@ -389,3 +606,26 @@ export type ModelRouterConfig = z.infer<typeof ModelRouterConfigSchema>;
 export type ModelRouterConfigUpdate = z.infer<typeof ModelRouterConfigUpdateSchema>;
 export type ModelRouterChatRequest = z.infer<typeof ModelRouterChatRequestSchema>;
 export type ModelRouterChatResponse = z.infer<typeof ModelRouterChatResponseSchema>;
+export type WorkspaceFolders = z.infer<typeof WorkspaceFoldersSchema>;
+export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
+export type WorkspaceConfigureInput = z.infer<typeof WorkspaceConfigureInputSchema>;
+export type FileEntry = z.infer<typeof FileEntrySchema>;
+export type FileReadInput = z.infer<typeof FileReadInputSchema>;
+export type FileReadOutput = z.infer<typeof FileReadOutputSchema>;
+export type FileWriteInput = z.infer<typeof FileWriteInputSchema>;
+export type FileAppendInput = z.infer<typeof FileAppendInputSchema>;
+export type FileListInput = z.infer<typeof FileListInputSchema>;
+export type FileSearchInput = z.infer<typeof FileSearchInputSchema>;
+export type FileSearchOutput = z.infer<typeof FileSearchOutputSchema>;
+export type FileCopyInput = z.infer<typeof FileCopyInputSchema>;
+export type FileMoveInput = z.infer<typeof FileMoveInputSchema>;
+export type FileDeleteInput = z.infer<typeof FileDeleteInputSchema>;
+export type ToolRiskLevel = z.infer<typeof ToolRiskLevelSchema>;
+export type ToolExecutionStatus = z.infer<typeof ToolExecutionStatusSchema>;
+export type ToolEventType = z.infer<typeof ToolEventTypeSchema>;
+export type ToolError = z.infer<typeof ToolErrorSchema>;
+export type ToolEventRecord = z.infer<typeof ToolEventRecordSchema>;
+export type ToolResult = z.infer<typeof ToolResultSchema>;
+export type ToolExecutionRequest = z.infer<typeof ToolExecutionRequestSchema>;
+export type ShellRunInput = z.infer<typeof ShellRunInputSchema>;
+export type ShellRunOutput = z.infer<typeof ShellRunOutputSchema>;

@@ -247,6 +247,57 @@ public struct ModelRouterConfigResponse: Decodable, Sendable {
   public let router: ModelRouterConfig
 }
 
+public struct WorkspaceFolders: Codable, Hashable, Sendable {
+  public let projects: String
+  public let tasks: String
+  public let artifacts: String
+  public let logs: String
+  public let skills: String
+  public let memory: String
+}
+
+public struct WorkspaceSettings: Codable, Hashable, Sendable {
+  public let rootPath: String
+  public let folders: WorkspaceFolders
+  public let initialized: Bool
+  public let createdAt: String
+  public let updatedAt: String
+}
+
+public struct WorkspaceResponse: Decodable, Sendable {
+  public let workspace: WorkspaceSettings
+}
+
+public struct WorkspaceConfigureRequest: Encodable, Sendable {
+  public let rootPath: String
+
+  public init(rootPath: String) {
+    self.rootPath = rootPath
+  }
+}
+
+public enum FileEntryKind: String, Codable, Sendable {
+  case file
+  case directory
+}
+
+public struct FileEntry: Identifiable, Codable, Hashable, Sendable {
+  public var id: String {
+    path
+  }
+
+  public let name: String
+  public let path: String
+  public let relativePath: String
+  public let kind: FileEntryKind
+  public let size: Int?
+  public let modifiedAt: String?
+}
+
+public struct FileListResponse: Decodable, Sendable {
+  public let entries: [FileEntry]
+}
+
 public enum OperatorEvent: Identifiable, Decodable, Sendable {
   case taskCreated(TaskEventEnvelope)
   case taskUpdated(TaskEventEnvelope)

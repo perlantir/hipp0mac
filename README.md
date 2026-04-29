@@ -58,6 +58,11 @@ Useful endpoints:
 - `GET /v1/model-router`
 - `PUT /v1/model-router`
 - `POST /v1/model-router/chat`
+- `GET /v1/workspace`
+- `PUT /v1/workspace`
+- `POST /v1/workspace/projects`
+- `GET /v1/workspace/files`
+- `POST /v1/tools/fs/:operation`
 
 Example task creation:
 

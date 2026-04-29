@@ -19,6 +19,9 @@ final class AppStore {
   var providers: [ProviderConfig] = []
   var routerConfig: ModelRouterConfig?
   var providerTestResults: [ProviderId: ProviderConnectionTestResponse] = [:]
+  var workspace: WorkspaceSettings?
+  var workspaceFiles: [FileEntry] = []
+  var fileExplorerPath = "."
   var commandText = ""
   var isCreatingTestTask = false
   var isRefreshingProviders = false
@@ -51,6 +54,7 @@ final class AppStore {
       await refreshHealth()
       await refreshTasks()
       await refreshProviders()
+      await refreshWorkspace()
     }
   }
 
@@ -88,6 +92,51 @@ final class AppStore {
       async let router = client.modelRouterConfig()
       providers = try await providerList
       routerConfig = try await router
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func refreshWorkspace() async {
+    do {
+      workspace = try await client.workspace()
+      workspaceFiles = try await client.listWorkspaceFiles(path: fileExplorerPath)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func configureWorkspace(rootPath: String) async {
+    do {
+      workspace = try await client.configureWorkspace(rootPath: rootPath)
+      fileExplorerPath = "."
+      workspaceFiles = try await client.listWorkspaceFiles(path: fileExplorerPath)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func openFileExplorerFolder(_ entry: FileEntry) async {
+    guard entry.kind == .directory else {
+      return
+    }
+
+    fileExplorerPath = entry.relativePath
+    do {
+      workspaceFiles = try await client.listWorkspaceFiles(path: fileExplorerPath)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func goToWorkspaceRoot() async {
+    fileExplorerPath = "."
+    do {
+      workspaceFiles = try await client.listWorkspaceFiles(path: fileExplorerPath)
       lastError = nil
     } catch {
       lastError = error.localizedDescription
