@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+.swiftpm/
+.vscode/
+.idea/
+node_modules/
+coverage/
+dist/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+

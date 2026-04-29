@@ -1,0 +1,31 @@
+{
+  "name": "operator-dock",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mac-first autonomous AI agent workspace.",
+  "type": "module",
+  "workspaces": [
+    "packages/protocol",
+    "packages/shared",
+    "apps/daemon"
+  ],
+  "scripts": {
+    "build": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run build -w @operator-dock/daemon",
+    "dev": "npm run dev -w @operator-dock/daemon",
+    "daemon": "npm run dev -w @operator-dock/daemon",
+    "mac:build": "swift build --package-path apps/mac",
+    "mac:run": "./script/build_and_run.sh",
+    "test": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run test -w @operator-dock/protocol && npm run test -w @operator-dock/daemon && swift test --package-path apps/mac",
+    "typecheck": "npm run typecheck -w @operator-dock/protocol && npm run typecheck -w @operator-dock/shared && npm run typecheck -w @operator-dock/daemon"
+  },
+  "engines": {
+    "node": ">=25.0.0",
+    "npm": ">=11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
