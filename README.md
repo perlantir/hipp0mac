@@ -8,7 +8,7 @@ Operator Dock is a Mac-first autonomous AI agent workspace. This repository star
 - `apps/daemon` - local Node/TypeScript daemon with HTTP, WebSocket events, SQLite, and migrations.
 - `packages/protocol` - shared zod schemas for task events, tool calls, approvals, artifacts, and model messages.
 - `packages/shared` - shared TypeScript utilities and default daemon connection settings.
-- `docs` - architecture notes and local API docs.
+- `docs` - architecture notes, roadmap, design handoff, and local API docs.
 
 ## Requirements
 
@@ -69,3 +69,8 @@ npm test
 
 This runs TypeScript package tests and SwiftPM tests for the macOS app core networking helpers.
 
+## Product Context
+
+- Project memory and standing quality directives: `docs/project-memory.md`
+- Roadmap phases: `docs/roadmap.md`
+- Claude design handoff: `docs/design/claude-handoff`
