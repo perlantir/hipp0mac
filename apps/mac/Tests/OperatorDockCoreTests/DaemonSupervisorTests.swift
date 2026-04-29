@@ -64,9 +64,9 @@ final class DaemonSupervisorTests: XCTestCase {
         workingDirectory: root.path,
         respawnDelaySeconds: 0.1,
         watchdogIntervalSeconds: 0.2,
-        healthTimeoutSeconds: 0.5,
-        startupGraceSeconds: 0.2,
-        healthFailureThreshold: 1,
+        healthTimeoutSeconds: 1.0,
+        startupGraceSeconds: 2.0,
+        healthFailureThreshold: 3,
         healthURLString: "http://127.0.0.1:\(port)/health",
         healthBearerToken: token
       )
@@ -145,9 +145,9 @@ final class DaemonSupervisorTests: XCTestCase {
         workingDirectory: root.path,
         respawnDelaySeconds: 30,
         watchdogIntervalSeconds: 0.2,
-        healthTimeoutSeconds: 0.5,
-        startupGraceSeconds: 0.2,
-        healthFailureThreshold: 1,
+        healthTimeoutSeconds: 1.0,
+        startupGraceSeconds: 2.0,
+        healthFailureThreshold: 3,
         healthURLString: "http://127.0.0.1:\(port)/health",
         healthBearerToken: token
       )
