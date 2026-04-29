@@ -11,19 +11,31 @@ enum ConnectionState: String {
 @MainActor
 @Observable
 final class AppStore {
-  var selectedSection: SidebarSection = .tasks
+  var selectedSection: SidebarSection = .home
   var connectionState: ConnectionState = .disconnected
   var health: HealthResponse?
   var tasks: [DockTask] = []
   var events: [OperatorEvent] = []
+  var providers: [ProviderConfig] = []
+  var routerConfig: ModelRouterConfig?
+  var providerTestResults: [ProviderId: ProviderConnectionTestResponse] = [:]
+  var commandText = ""
   var isCreatingTestTask = false
+  var isRefreshingProviders = false
   var lastError: String?
 
+  var displayTasks: [OperatorTask] {
+    let liveTasks = tasks.map(OperatorTask.init(task:))
+    return liveTasks.isEmpty ? SampleData.tasks : liveTasks + SampleData.tasks
+  }
+
   private let client: DaemonClient
+  private let credentialStore: ProviderCredentialStore
   private var eventStreamTask: Swift.Task<Void, Never>?
 
-  init(client: DaemonClient) {
+  init(client: DaemonClient, credentialStore: ProviderCredentialStore = ProviderCredentialStore()) {
     self.client = client
+    self.credentialStore = credentialStore
   }
 
   func start() {
@@ -38,6 +50,7 @@ final class AppStore {
     Swift.Task {
       await refreshHealth()
       await refreshTasks()
+      await refreshProviders()
     }
   }
 
@@ -60,7 +73,103 @@ final class AppStore {
     }
   }
 
+  func refreshProviders() async {
+    guard !isRefreshingProviders else {
+      return
+    }
+
+    isRefreshingProviders = true
+    defer {
+      isRefreshingProviders = false
+    }
+
+    do {
+      async let providerList = client.listProviders()
+      async let router = client.modelRouterConfig()
+      providers = try await providerList
+      routerConfig = try await router
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func updateProvider(
+    providerId: ProviderId,
+    enabled: Bool? = nil,
+    endpoint: String? = nil,
+    defaultModel: String? = nil
+  ) async {
+    do {
+      let provider = try await client.updateProvider(
+        providerId: providerId,
+        update: ProviderConfigUpdate(
+          enabled: enabled,
+          endpoint: endpoint,
+          defaultModel: defaultModel
+        )
+      )
+      upsert(provider)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func saveProviderAPIKey(providerId: ProviderId, apiKey: String) async {
+    let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      return
+    }
+
+    do {
+      try credentialStore.saveAPIKey(trimmed, providerId: providerId)
+      await refreshProviders()
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func testProvider(providerId: ProviderId) async {
+    do {
+      providerTestResults[providerId] = try await client.testProvider(providerId: providerId)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
   func createTestTask() async {
+    await createTask(
+      title: "Mac app smoke task",
+      prompt: "Verify that Operator Dock can create a task and receive the corresponding live event.",
+      metadata: [
+        "source": .string("mac-app"),
+        "demo": .boolean(true)
+      ]
+    )
+  }
+
+  func createTaskFromComposer() async {
+    let trimmed = commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      return
+    }
+
+    let title = trimmed.count > 72 ? String(trimmed.prefix(69)) + "..." : trimmed
+    await createTask(
+      title: title,
+      prompt: trimmed,
+      metadata: [
+        "source": .string("command-composer")
+      ]
+    )
+    commandText = ""
+    selectedSection = .tasks
+  }
+
+  private func createTask(title: String, prompt: String, metadata: [String: JSONValue]) async {
     guard !isCreatingTestTask else {
       return
     }
@@ -72,12 +181,9 @@ final class AppStore {
 
     do {
       let task = try await client.createTask(
-        title: "Mac app smoke task",
-        prompt: "Verify that Operator Dock can create a task and receive the corresponding live event.",
-        metadata: [
-          "source": .string("mac-app"),
-          "demo": .boolean(true)
-        ]
+        title: title,
+        prompt: prompt,
+        metadata: metadata
       )
       upsert(task)
       lastError = nil
@@ -111,6 +217,14 @@ final class AppStore {
       tasks[index] = task
     } else {
       tasks.insert(task, at: 0)
+    }
+  }
+
+  private func upsert(_ provider: ProviderConfig) {
+    if let index = providers.firstIndex(where: { $0.id == provider.id }) {
+      providers[index] = provider
+    } else {
+      providers.append(provider)
     }
   }
 }

@@ -119,6 +119,134 @@ public struct HealthResponse: Decodable, Sendable {
   public let timestamp: String
 }
 
+public enum ProviderId: String, Codable, CaseIterable, Identifiable, Sendable {
+  case openai
+  case anthropic
+  case openrouter
+  case ollama
+  case lmstudio
+
+  public var id: String {
+    rawValue
+  }
+
+  public var displayName: String {
+    switch self {
+    case .openai: "OpenAI"
+    case .anthropic: "Anthropic"
+    case .openrouter: "OpenRouter"
+    case .ollama: "Ollama"
+    case .lmstudio: "LM Studio"
+    }
+  }
+}
+
+public enum ProviderKind: String, Codable, Sendable {
+  case hosted
+  case local
+}
+
+public struct ModelCapabilities: Codable, Hashable, Sendable {
+  public let vision: Bool
+  public let tools: Bool
+  public let streaming: Bool
+  public let maxContextTokens: Int?
+  public let inputCostPerMillionTokens: Double?
+  public let outputCostPerMillionTokens: Double?
+}
+
+public struct ProviderModel: Identifiable, Codable, Hashable, Sendable {
+  public let id: String
+  public let displayName: String
+  public let capabilities: ModelCapabilities
+}
+
+public struct ModelPurposeDefaults: Codable, Hashable, Sendable {
+  public let planner: String?
+  public let executor: String?
+  public let verifier: String?
+  public let summarizer: String?
+  public let memoryCurator: String?
+
+  public init(
+    planner: String? = nil,
+    executor: String? = nil,
+    verifier: String? = nil,
+    summarizer: String? = nil,
+    memoryCurator: String? = nil
+  ) {
+    self.planner = planner
+    self.executor = executor
+    self.verifier = verifier
+    self.summarizer = summarizer
+    self.memoryCurator = memoryCurator
+  }
+}
+
+public struct ProviderConfig: Identifiable, Codable, Hashable, Sendable {
+  public let id: ProviderId
+  public let kind: ProviderKind
+  public let displayName: String
+  public let enabled: Bool
+  public let endpoint: String?
+  public let defaultModel: String?
+  public let roleDefaults: ModelPurposeDefaults
+  public let apiKeyConfigured: Bool
+  public let models: [ProviderModel]
+  public let updatedAt: String?
+}
+
+public struct ProviderListResponse: Decodable, Sendable {
+  public let providers: [ProviderConfig]
+}
+
+public struct ProviderResponse: Decodable, Sendable {
+  public let provider: ProviderConfig
+}
+
+public struct ProviderConfigUpdate: Encodable, Sendable {
+  public let enabled: Bool?
+  public let endpoint: String?
+  public let defaultModel: String?
+  public let roleDefaults: ModelPurposeDefaults?
+
+  public init(
+    enabled: Bool? = nil,
+    endpoint: String? = nil,
+    defaultModel: String? = nil,
+    roleDefaults: ModelPurposeDefaults? = nil
+  ) {
+    self.enabled = enabled
+    self.endpoint = endpoint
+    self.defaultModel = defaultModel
+    self.roleDefaults = roleDefaults
+  }
+}
+
+public struct ProviderConnectionTestResponse: Decodable, Hashable, Sendable {
+  public let providerId: ProviderId
+  public let ok: Bool
+  public let message: String
+  public let latencyMs: Double?
+  public let checkedAt: String
+}
+
+public enum RouterMode: String, Codable, Sendable {
+  case auto
+  case manual
+}
+
+public struct ModelRouterConfig: Codable, Hashable, Sendable {
+  public let mode: RouterMode
+  public let purposeDefaults: ModelPurposeDefaults
+  public let fallbackProvider: ProviderId?
+  public let updatedAt: String?
+}
+
+public struct ModelRouterConfigResponse: Decodable, Sendable {
+  public let router: ModelRouterConfig
+}
+
 public enum OperatorEvent: Identifiable, Decodable, Sendable {
   case taskCreated(TaskEventEnvelope)
   case taskUpdated(TaskEventEnvelope)
@@ -199,4 +327,3 @@ public struct GenericEventEnvelope: Decodable, Sendable {
 private enum EventCodingKeys: String, CodingKey {
   case type
 }
-

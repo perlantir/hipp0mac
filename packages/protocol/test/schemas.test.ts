@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ModelMessageSchema,
+  ModelRouterChatRequestSchema,
+  ProviderConfigSchema,
   OperatorEventSchema,
   TaskCreateInputSchema,
   TaskSchema,
@@ -87,5 +89,47 @@ describe("protocol schemas", () => {
 
     expect(message.parts).toHaveLength(2);
   });
-});
 
+  it("validates provider configuration without accepting plaintext secrets", () => {
+    const provider = ProviderConfigSchema.parse({
+      id: "openai",
+      kind: "hosted",
+      displayName: "OpenAI",
+      enabled: true,
+      defaultModel: "gpt-4.1",
+      roleDefaults: {
+        planner: "gpt-4.1"
+      },
+      apiKeyConfigured: true,
+      models: [
+        {
+          id: "gpt-4.1",
+          displayName: "GPT-4.1",
+          capabilities: {
+            vision: true,
+            tools: true,
+            streaming: true,
+            maxContextTokens: 128000
+          }
+        }
+      ]
+    });
+
+    expect(provider).not.toHaveProperty("apiKey");
+  });
+
+  it("validates normalized model router chat requests", () => {
+    const parsed = ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      messages: [
+        {
+          role: "user",
+          content: "Create an execution plan."
+        }
+      ]
+    });
+
+    expect(parsed.stream).toBe(false);
+    expect(parsed.tools).toEqual([]);
+  });
+});

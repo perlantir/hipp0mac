@@ -23,12 +23,17 @@ let package = Package(
       dependencies: ["OperatorDockCore"]
     ),
     .target(
-      name: "OperatorDockCore"
+      name: "OperatorDockCore",
+      linkerSettings: [
+        .linkedFramework("Security")
+      ]
     ),
     .testTarget(
       name: "OperatorDockCoreTests",
-      dependencies: ["OperatorDockCore"]
+      dependencies: [
+        "OperatorDockCore",
+        "OperatorDock"
+      ]
     )
   ]
 )
-

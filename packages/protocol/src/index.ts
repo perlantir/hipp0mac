@@ -143,6 +143,138 @@ export const ModelMessageSchema = z.object({
   createdAt: isoDateTimeSchema
 });
 
+export const ProviderIdSchema = z.enum(["openai", "anthropic", "openrouter", "ollama", "lmstudio"]);
+
+export const ProviderKindSchema = z.enum(["hosted", "local"]);
+
+export const ModelPurposeSchema = z.enum([
+  "planner",
+  "executor",
+  "verifier",
+  "summarizer",
+  "memory_curator"
+]);
+
+export const ModelCapabilitySchema = z.object({
+  vision: z.boolean(),
+  tools: z.boolean(),
+  streaming: z.boolean(),
+  maxContextTokens: z.number().int().positive().optional(),
+  inputCostPerMillionTokens: z.number().nonnegative().optional(),
+  outputCostPerMillionTokens: z.number().nonnegative().optional()
+});
+
+export const ProviderModelSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  displayName: z.string().trim().min(1).max(200),
+  capabilities: ModelCapabilitySchema
+});
+
+export const ModelPurposeDefaultsSchema = z.object({
+  planner: z.string().trim().min(1).optional(),
+  executor: z.string().trim().min(1).optional(),
+  verifier: z.string().trim().min(1).optional(),
+  summarizer: z.string().trim().min(1).optional(),
+  memoryCurator: z.string().trim().min(1).optional()
+});
+
+export const ProviderConfigSchema = z.object({
+  id: ProviderIdSchema,
+  kind: ProviderKindSchema,
+  displayName: z.string().trim().min(1).max(80),
+  enabled: z.boolean(),
+  endpoint: z.string().url().optional(),
+  defaultModel: z.string().trim().min(1).optional(),
+  roleDefaults: ModelPurposeDefaultsSchema.default({}),
+  apiKeyConfigured: z.boolean(),
+  models: z.array(ProviderModelSchema),
+  updatedAt: isoDateTimeSchema.optional()
+});
+
+export const ProviderConfigUpdateSchema = z.object({
+  enabled: z.boolean().optional(),
+  endpoint: z.string().url().optional(),
+  defaultModel: z.string().trim().min(1).optional(),
+  roleDefaults: ModelPurposeDefaultsSchema.optional()
+});
+
+export const ProviderListResponseSchema = z.object({
+  providers: z.array(ProviderConfigSchema)
+});
+
+export const ProviderResponseSchema = z.object({
+  provider: ProviderConfigSchema
+});
+
+export const ProviderConnectionTestResponseSchema = z.object({
+  providerId: ProviderIdSchema,
+  ok: z.boolean(),
+  message: z.string(),
+  latencyMs: z.number().nonnegative().optional(),
+  checkedAt: isoDateTimeSchema
+});
+
+export const RouterModeSchema = z.enum(["auto", "manual"]);
+
+export const ModelRouterConfigSchema = z.object({
+  mode: RouterModeSchema,
+  purposeDefaults: ModelPurposeDefaultsSchema,
+  fallbackProvider: ProviderIdSchema.optional(),
+  updatedAt: isoDateTimeSchema.optional()
+});
+
+export const ModelRouterConfigUpdateSchema = z.object({
+  mode: RouterModeSchema.optional(),
+  purposeDefaults: ModelPurposeDefaultsSchema.optional(),
+  fallbackProvider: ProviderIdSchema.optional()
+});
+
+export const ModelRouterConfigResponseSchema = z.object({
+  router: ModelRouterConfigSchema
+});
+
+export const ModelRouterMessageSchema = z.object({
+  role: ModelMessageRoleSchema.exclude(["tool"]),
+  content: z.string().min(1)
+});
+
+export const ModelRouterToolSchema = z.object({
+  name: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  parameters: jsonObjectSchema
+});
+
+export const ModelRouterChatRequestSchema = z.object({
+  purpose: ModelPurposeSchema,
+  providerId: ProviderIdSchema.optional(),
+  model: z.string().trim().min(1).optional(),
+  messages: z.array(ModelRouterMessageSchema).min(1),
+  tools: z.array(ModelRouterToolSchema).default([]),
+  stream: z.boolean().default(false),
+  metadata: jsonObjectSchema.default({})
+});
+
+export const ModelRouterToolCallSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  input: jsonObjectSchema
+});
+
+export const ModelRouterChatResponseSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1),
+  message: z.object({
+    role: z.literal("assistant"),
+    content: z.string(),
+    toolCalls: z.array(ModelRouterToolCallSchema).default([])
+  }),
+  usage: z.object({
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    estimatedCostUsd: z.number().nonnegative().optional()
+  }).default({})
+});
+
 const EventBaseSchema = z.object({
   id: idSchema,
   occurredAt: isoDateTimeSchema
@@ -243,4 +375,17 @@ export type OperatorEvent = z.infer<typeof OperatorEventSchema>;
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 export type CreateTaskResponse = z.infer<typeof CreateTaskResponseSchema>;
 export type TaskListResponse = z.infer<typeof TaskListResponseSchema>;
-
+export type ProviderId = z.infer<typeof ProviderIdSchema>;
+export type ProviderKind = z.infer<typeof ProviderKindSchema>;
+export type ModelPurpose = z.infer<typeof ModelPurposeSchema>;
+export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
+export type ProviderModel = z.infer<typeof ProviderModelSchema>;
+export type ModelPurposeDefaults = z.infer<typeof ModelPurposeDefaultsSchema>;
+export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+export type ProviderConfigUpdate = z.infer<typeof ProviderConfigUpdateSchema>;
+export type ProviderListResponse = z.infer<typeof ProviderListResponseSchema>;
+export type ProviderConnectionTestResponse = z.infer<typeof ProviderConnectionTestResponseSchema>;
+export type ModelRouterConfig = z.infer<typeof ModelRouterConfigSchema>;
+export type ModelRouterConfigUpdate = z.infer<typeof ModelRouterConfigUpdateSchema>;
+export type ModelRouterChatRequest = z.infer<typeof ModelRouterChatRequestSchema>;
+export type ModelRouterChatResponse = z.infer<typeof ModelRouterChatResponseSchema>;

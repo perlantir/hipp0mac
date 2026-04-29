@@ -4,41 +4,28 @@ struct DetailView: View {
   @Bindable var store: AppStore
 
   var body: some View {
-    Group {
+    ZStack {
       switch store.selectedSection {
+      case .home:
+        HomeDashboardView(store: store)
       case .tasks:
-        TaskBoardView(store: store)
+        TasksListScreen(store: store)
+      case .workspace:
+        WorkspaceScreen(store: store)
       case .projects:
-        PlaceholderPane(title: "Projects", systemImage: "folder")
+        ProjectsScreen()
       case .memory:
-        PlaceholderPane(title: "Memory", systemImage: "brain")
+        MemoryScreen()
+      case .skills:
+        SkillsScreen()
+      case .integrations:
+        IntegrationsScreen()
       case .schedules:
-        PlaceholderPane(title: "Schedules", systemImage: "calendar.badge.clock")
+        SchedulesScreen()
       case .artifacts:
-        PlaceholderPane(title: "Artifacts", systemImage: "shippingbox")
+        ArtifactsScreen()
       case .settings:
         SettingsView(store: store)
-      }
-    }
-    .toolbar {
-      ToolbarItemGroup {
-        Button {
-          Task {
-            await store.refreshHealth()
-            await store.refreshTasks()
-          }
-        } label: {
-          Label("Refresh", systemImage: "arrow.clockwise")
-        }
-
-        Button {
-          Task {
-            await store.createTestTask()
-          }
-        } label: {
-          Label("New Test Task", systemImage: "plus.circle")
-        }
-        .disabled(store.isCreatingTestTask)
       }
     }
   }

@@ -52,6 +52,12 @@ Useful endpoints:
 - `GET /health`
 - `GET /v1/tasks`
 - `POST /v1/tasks`
+- `GET /v1/providers`
+- `PUT /v1/providers/:providerId`
+- `POST /v1/providers/:providerId/test`
+- `GET /v1/model-router`
+- `PUT /v1/model-router`
+- `POST /v1/model-router/chat`
 
 Example task creation:
 
@@ -74,3 +80,7 @@ This runs TypeScript package tests and SwiftPM tests for the macOS app core netw
 - Project memory and standing quality directives: `docs/project-memory.md`
 - Roadmap phases: `docs/roadmap.md`
 - Claude design handoff: `docs/design/claude-handoff`
+
+## Provider Security
+
+The Mac app stores hosted provider API keys in macOS Keychain using service `com.perlantir.operatordock.providers`. The daemon reads credentials from the same local Keychain service when it needs to test or use a provider. Provider settings stored in SQLite contain only non-secret configuration such as enabled state, endpoint, default model, and role defaults.

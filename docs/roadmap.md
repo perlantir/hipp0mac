@@ -1,11 +1,56 @@
 # Operator Dock Roadmap
 
+## Phase 0 - Repo Setup and Architecture
+
+Status: implemented.
+
+Goal: create the initial monorepo architecture for Operator Dock, a Mac-first autonomous AI agent workspace.
+
+Requirements:
+
+- Use a monorepo structure.
+- Include a native Mac app folder and a local agent daemon folder.
+- Mac app should be SwiftUI.
+- Agent daemon should be TypeScript/Node.
+- Mac app communicates with daemon over localhost HTTP and WebSocket.
+- Include shared protocol schemas for task events, tool calls, approvals, artifacts, and model messages.
+- Include local SQLite database setup for tasks, projects, memory, settings, schedules, and artifacts.
+- Include basic README with setup instructions.
+- Include development scripts.
+- Include test scaffolding.
+
+Implemented baseline:
+
+- `/apps/mac`
+- `/apps/daemon`
+- `/packages/protocol`
+- `/packages/shared`
+- `/docs`
+- SwiftUI app shell with sidebar navigation placeholders.
+- TypeScript Fastify daemon with HTTP server and WebSocket event stream.
+- `GET /health`.
+- zod protocol package.
+- SQLite migrations.
+- `POST /v1/tasks`.
+- Mac app can create a test task and receive live task events.
+
+Quality bar:
+
+- Production-style structure.
+- Strong typing.
+- Clear errors.
+- No fake hardcoded architecture beyond demo placeholders.
+- Tests for protocol schemas and daemon health/task creation.
+
 ## Phase 1 - Mac App Shell and Design Integration
+
+Status: implemented.
 
 Goal: create the production-quality Mac app shell for Operator Dock based on the provided Claude design system and screens.
 
 Implement:
 
+- Dark-first design system.
 - Sidebar navigation.
 - Home dashboard.
 - Task list screen.
@@ -34,7 +79,7 @@ Reusable components:
 
 Design requirements:
 
-- Match the Claude design as closely as possible.
+- Match the Claude design direction closely.
 - Use realistic sample data where backend data is not available yet.
 - Keep components wired for real data.
 - App should feel premium, dense, and polished.
@@ -45,6 +90,8 @@ Design requirements:
 - Add snapshot or component tests where possible.
 
 ## Phase 2 - Provider Setup and Model Router
+
+Status: implemented.
 
 Goal: implement provider setup and the normalized model routing layer.
 
@@ -64,7 +111,7 @@ Requirements:
 - Implement connection tests for each provider.
 - Implement a normalized `ModelRouter` interface.
 - Support chat completion, streaming, and tool-call style responses where available.
-- Track model capabilities: vision, tools, streaming, max context, and cost estimate when known.
+- Track model capabilities: vision, tools, streaming, max context, and cost estimate if known.
 - Allow user to set default model for planner, executor, verifier, summarizer, and memory curator.
 - Add Auto mode selection.
 
@@ -78,50 +125,4 @@ Tests:
 
 - Unit tests for provider config validation.
 - Mock provider tests for `ModelRouter`.
-- UI test for adding and testing a provider.
-
-## Phase 3 - Local Workspace and File Tools
-
-Goal: implement local workspace management and safe file tools.
-
-Requirements:
-
-- Create a default Operator Dock workspace folder under a user-selected location.
-- Projects live inside `workspace/projects`.
-- Tasks live inside `workspace/tasks`.
-- Artifacts live inside `workspace/artifacts`.
-- Logs live inside `workspace/logs`.
-- Skills live inside `workspace/skills`.
-- Add onboarding step to choose workspace location.
-- Add permissions explanation.
-
-Tools:
-
-- `fs.read`
-- `fs.write`
-- `fs.append`
-- `fs.list`
-- `fs.search`
-- `fs.copy`
-- `fs.move`
-- `fs.delete` with approval requirement
-
-Tool execution events:
-
-- `tool.started`
-- `tool.output`
-- `tool.completed`
-- `tool.failed`
-
-Safety:
-
-- Default file writes are restricted to the workspace.
-- Any write or delete outside the workspace requires approval.
-- Block deletion of system directories.
-
-Tests:
-
-- File tool unit tests.
-- Safety boundary tests.
-- Event emission tests.
-
+- UI test for adding/testing provider.

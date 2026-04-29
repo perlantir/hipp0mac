@@ -8,13 +8,14 @@ struct PlaceholderPane: View {
     VStack(spacing: 12) {
       Image(systemName: systemImage)
         .font(.system(size: 42))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(ODTheme.ColorToken.textMuted)
 
       Text(title)
-        .font(.title2)
+        .font(.odDisplay(22, weight: .medium))
+        .foregroundStyle(ODTheme.ColorToken.textPrimary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .navigationTitle(title)
+    .background(ODTheme.ColorToken.canvas)
   }
 }
 

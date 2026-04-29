@@ -22,6 +22,7 @@ The protocol package defines zod schemas for:
 - tool call request, output, and failure events
 - approval request and resolution events
 - artifact creation events
+- provider configuration, model capabilities, provider connection tests, and model router chat requests
 
 Swift models in the app mirror the wire protocol needed by the shell. As the product grows, these schemas should become the source of truth for generated clients.
 
@@ -36,3 +37,17 @@ The first migration creates durable tables for:
 - `schedules`
 - `artifacts`
 
+Provider settings are stored in the `settings` table as non-secret JSON. Hosted provider API keys are never stored in SQLite.
+
+## Provider And Model Router
+
+The Mac app writes hosted provider API keys to macOS Keychain under service `com.perlantir.operatordock.providers`. The daemon reads those keys from local secure storage through the system Keychain when it needs to test or call a hosted provider.
+
+The daemon exposes provider setup endpoints under `/v1/providers` and model-router endpoints under `/v1/model-router`. The normalized router supports:
+
+- OpenAI-compatible chat completions for OpenAI, OpenRouter, and LM Studio style endpoints.
+- Anthropic messages.
+- Ollama local chat.
+- Tool-call style response normalization where the provider exposes tool calls.
+
+Streaming capability is tracked per model in protocol metadata and reserved in the router adapter interface for the execution layer that will consume streams.

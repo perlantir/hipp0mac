@@ -62,6 +62,28 @@ public struct DaemonClient: Sendable {
     return response.task
   }
 
+  public func listProviders() async throws -> [ProviderConfig] {
+    let response: ProviderListResponse = try await get("/v1/providers")
+    return response.providers
+  }
+
+  public func updateProvider(
+    providerId: ProviderId,
+    update: ProviderConfigUpdate
+  ) async throws -> ProviderConfig {
+    let response: ProviderResponse = try await put("/v1/providers/\(providerId.rawValue)", body: update)
+    return response.provider
+  }
+
+  public func testProvider(providerId: ProviderId) async throws -> ProviderConnectionTestResponse {
+    try await postWithoutBody("/v1/providers/\(providerId.rawValue)/test")
+  }
+
+  public func modelRouterConfig() async throws -> ModelRouterConfig {
+    let response: ModelRouterConfigResponse = try await get("/v1/model-router")
+    return response.router
+  }
+
   public func events() -> AsyncThrowingStream<OperatorEvent, Error> {
     AsyncThrowingStream { continuation in
       let task = session.webSocketTask(with: webSocketURL)
@@ -89,6 +111,27 @@ public struct DaemonClient: Sendable {
     request.setValue("application/json", forHTTPHeaderField: "content-type")
     request.httpBody = try encoder.encode(body)
     return try await send(request)
+  }
+
+  private func put<RequestBody: Encodable, Response: Decodable>(
+    _ path: String,
+    body: RequestBody
+  ) async throws -> Response {
+    var request = URLRequest(url: endpoint(path))
+    request.httpMethod = "PUT"
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try encoder.encode(body)
+    return try await send(request)
+  }
+
+  private func postWithoutBody<Response: Decodable>(_ path: String) async throws -> Response {
+    var request = URLRequest(url: endpoint(path))
+    request.httpMethod = "POST"
+    return try await send(request)
+  }
+
+  private func endpoint(_ path: String) -> URL {
+    baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
   }
 
   private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {
@@ -149,4 +192,3 @@ public struct DaemonClient: Sendable {
     }
   }
 }
-

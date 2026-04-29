@@ -13,6 +13,9 @@ import { loadConfig, type DaemonConfig } from "./config.js";
 import { openDatabase } from "./db/connection.js";
 import { runMigrations } from "./db/migrations.js";
 import { ApiError } from "./errors.js";
+import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/credentialStore.js";
+import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
+import { registerProviderRoutes } from "./providers/routes.js";
 import { TaskRepository } from "./tasks/taskRepository.js";
 import { EventBus, registerEventRoutes } from "./websocket/eventBus.js";
 
@@ -20,6 +23,7 @@ export interface BuildAppOptions {
   config?: DaemonConfig;
   database?: DatabaseSync;
   eventBus?: EventBus;
+  credentialStore?: CredentialStore;
   logger?: boolean;
   migrate?: boolean;
 }
@@ -29,12 +33,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const ownsDatabase = options.database === undefined;
   const database = options.database ?? openDatabase(config.databasePath);
   const eventBus = options.eventBus ?? new EventBus();
+  const credentialStore = options.credentialStore ?? new MacOSKeychainCredentialStore();
 
   if (options.migrate !== false) {
     runMigrations(database, config.migrationsDir);
   }
 
   const tasks = new TaskRepository(database);
+  const providerSettings = new ProviderSettingsRepository(database);
   const app = Fastify({
     logger: options.logger ?? true
   });
@@ -122,7 +128,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   await registerEventRoutes(app, eventBus);
+  await registerProviderRoutes(app, {
+    settings: providerSettings,
+    credentialStore
+  });
 
   return app;
 }
-
