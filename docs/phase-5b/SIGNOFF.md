@@ -2,7 +2,7 @@
 
 Date: 2026-04-29<br>
 Branch: `phase-5b/tool-execution-safety`<br>
-Local verification commit: `2f5337c743ed99480ae8e9b07eb3d51d88bfce49`
+Local/CI verification commit: `fed58f1a262206f36b28e98b18302a4feaa4b9ff`
 
 Status: `In Review`. This draft records the current implementation
 checkpoint. Phase 5B is not complete until the remaining gate criteria
@@ -13,7 +13,7 @@ below have CI and manual-audit evidence.
 | Criterion | Status | Evidence |
 | --- | --- | --- |
 | Every Phase 5A test still passes | DONE locally | `npm test` passed locally on 2026-04-29. This ran protocol build/tests, daemon build/tests, and SwiftPM macOS tests. |
-| Every Phase 5B test passes in CI on three consecutive runs | BLOCKED | GitHub Actions has not yet been run three consecutive times for this branch. |
+| Every Phase 5B test passes in CI on three consecutive runs | DONE for current automated suite | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against `fed58f1a262206f36b28e98b18302a4feaa4b9ff`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/3). |
 | `end_to_end_with_crash` passes with at least 100 crash injection points | BLOCKED | A reusable crash hook and orphan tests exist, but the 100-point end-to-end crash harness is not yet implemented. |
 | Manual idempotency audit | BLOCKED | Not yet run manually. Current automated coverage includes fs.write replay, fs.delete tombstone dedupe, pure orphan re-exec, synthesized delete result, and no-status-query block. |
 | Manual safety audit | BLOCKED | Not yet run manually. Automated coverage includes 20 malicious shell inputs, fs scope denial, network scope denial, approval pause/resume/denial, and safety-before-intent event ordering. |
@@ -83,7 +83,18 @@ Docs:
 
 ## CI Evidence
 
-BLOCKED: no GitHub Actions run URLs recorded yet for Phase 5B.
+- Branch pushed to `origin/phase-5b/tool-execution-safety`.
+- Verification commit: `fed58f1a262206f36b28e98b18302a4feaa4b9ff`.
+- Workflow: `Phase 5B Tool Execution`.
+- Run: https://github.com/perlantir/hipp0mac/actions/runs/25139274241.
+- Consecutive passing attempts:
+  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/1
+  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/2
+  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/3
+
+Earlier CI failure recorded and fixed:
+
+- https://github.com/perlantir/hipp0mac/actions/runs/25139068498/attempts/3 failed in the existing Swift supervisor crash-recovery test because the replacement daemon could be killed by an aggressive 0.2s startup grace / single failed health check on a busy macOS runner. Commit `fed58f1a262206f36b28e98b18302a4feaa4b9ff` hardened the test configuration to allow a 2s startup grace and 3 failed health checks before respawn.
 
 ## Known Risks
 
