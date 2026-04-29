@@ -18,7 +18,7 @@
     "mac:build": "swift build --package-path apps/mac",
     "mac:run": "./script/build_and_run.sh",
     "test": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run test -w @operator-dock/protocol && npm run test -w @operator-dock/daemon && swift test --package-path apps/mac && swift test --package-path apps/helper",
-    "typecheck": "npm run typecheck -w @operator-dock/protocol && npm run typecheck -w @operator-dock/shared && npm run typecheck -w @operator-dock/daemon"
+    "typecheck": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run typecheck -w @operator-dock/protocol && npm run typecheck -w @operator-dock/shared && npm run typecheck -w @operator-dock/daemon"
   },
   "engines": {
     "node": ">=25.0.0",
