@@ -6,7 +6,13 @@ export default defineConfig({
       provider: "v8",
       reportsDirectory: "coverage",
       include: [
-        "src/persistence/**/*.ts"
+        "src/persistence/**/*.ts",
+        "src/tools/runtime/**/*.ts",
+        "src/tools/http/**/*.ts",
+        "src/tools/sleep/**/*.ts"
+      ],
+      exclude: [
+        "src/tools/runtime/secretRedaction.ts"
       ],
       thresholds: {
         statements: 90,

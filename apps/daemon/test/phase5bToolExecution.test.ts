@@ -61,6 +61,8 @@ describe("Phase 5B manifest registry", () => {
       sideEffectClass: "pure"
     });
     harness.manifests.register(manifest);
+    expect(harness.manifests.get("test.duplicate", "1")).toMatchObject({ name: "test.duplicate" });
+    expect(harness.manifests.list().map((registered) => registered.name)).toContain("test.duplicate");
     expect(() => harness.manifests.register(manifest)).toThrow(/Duplicate/);
   });
 
@@ -98,6 +100,15 @@ describe("Phase 5B safety and idempotency", () => {
     for (let index = 0; index < 1000; index += 1) {
       expect(evaluatePredicate(predicate, input, harness.safety.scopeContext(shellExecTool().manifest))).toBe(true);
     }
+    expect(evaluatePredicate({ op: "or", clauses: [
+      { op: "equals", path: "mode", value: "slow" },
+      { op: "in", path: "mode", values: ["fast", "safe"] }
+    ] }, { mode: "fast" }, harness.safety.scopeContext(shellExecTool().manifest))).toBe(true);
+    expect(evaluatePredicate({
+      op: "pathOutsideScope",
+      inputPath: "cwd",
+      scope: "filesystem"
+    }, { cwd: "/etc" }, harness.safety.scopeContext(shellExecTool().manifest))).toBe(true);
   });
 
   it("forbidden_pattern_denies_shell_exec_before_intent", async () => {
@@ -580,7 +591,7 @@ describe("Phase 5B budgets and reconciliation", () => {
     ]));
   });
 
-  it("http_fetch_internal_ips_denied_even_when_allowlisted", async () => {
+  it("http_fetch_internal_ips_denied_by_default_and_allowlisted_host_succeeds", async () => {
     const { app } = await configuredApp();
     const denied = await app.inject({
       method: "POST",
@@ -588,8 +599,7 @@ describe("Phase 5B budgets and reconciliation", () => {
       headers: authHeaders(),
       payload: {
         toolName: "http.fetch",
-        input: { url: "http://169.254.169.254/latest/meta-data" },
-        allowedNetworkHosts: ["169.254.169.254"]
+        input: { url: "http://169.254.169.254/latest/meta-data" }
       }
     });
     expect(ToolExecutionResponseSchema.parse(denied.json()).result.status).toBe("failed");
@@ -616,7 +626,9 @@ describe("Phase 5B budgets and reconciliation", () => {
     });
     server.close();
     await app.close();
-    expect(ToolExecutionResponseSchema.parse(allowed.json()).result.status).toBe("failed");
+    const result = ToolExecutionResponseSchema.parse(allowed.json()).result;
+    expect(result.status).toBe("completed");
+    expect(result.output).toMatchObject({ status: 200, body: "ok" });
   });
 });
 

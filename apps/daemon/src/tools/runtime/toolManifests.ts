@@ -120,19 +120,9 @@ export function shellForbiddenPredicates(): Predicate[] {
 }
 
 export function httpForbiddenPredicates(): Predicate[] {
-  const internal = [
-    "file:",
-    "https?://localhost(?:[:/]|$)",
-    "https?://127\\.",
-    "https?://0\\.",
-    "https?://10\\.",
-    "https?://169\\.254\\.",
-    "https?://172\\.(?:1[6-9]|2[0-9]|3[0-1])\\.",
-    "https?://192\\.168\\.",
-    "https?://\\[?::1\\]?"
+  return [
+    { op: "match", path: "url", regex: "^file:" }
   ];
-
-  return internal.map((regex) => ({ op: "match", path: "url", regex }) as Predicate);
 }
 
 function jsonObject(title: string) {

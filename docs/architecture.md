@@ -67,14 +67,54 @@ File writes and deletes default to the configured workspace boundary. Outside-wo
 
 ## Enterprise Tool Runtime And Safety Governor
 
-The daemon owns a strict local tool runtime used by every file and shell operation. Each tool definition declares:
+The daemon owns a strict local tool runtime used by every file, shell,
+HTTP, and test-only sleep operation. Each executable tool registers a
+Phase 5B capability manifest at daemon startup. No tool runs without a
+manifest.
 
-- `inputSchema` and `outputSchema` validation.
-- `riskLevel` classification.
-- deterministic runtime error codes.
-- approval hooks.
-- replay metadata.
+Each manifest declares:
 
-Runtime executions persist to `tool_executions`, emit durable `tool_events`, and can pause on `tool_approvals`. Approved executions resume with a scoped approval token rather than broad process-level trust. `shell.run` and `shell.runInteractive` execute through `/bin/zsh -lc`, capture stdout/stderr into workspace log refs, support timeout and cancellation, and redact secret-looking values before output or raw refs are persisted.
+- zod-backed runtime input/output validation plus JSON-schema metadata
+- side-effect class
+- idempotency support
+- filesystem and network scope
+- approval predicates and forbidden-input predicates
+- timeout policy
 
-The shell safety governor denies system-destructive commands, requires approval for `sudo`, curl/wget piped into shells, broad recursive deletes, and detected outside-workspace mutations, and blocks filesystem system-folder deletes through the workspace path boundary.
+Execution order is:
+
+```text
+input schema validation
+safety_decision
+budget check
+lock_acquired
+tool_call_intended
+tool function
+tool_call_result
+lock_released
+```
+
+Approval-required calls stop after `safety_decision` and create a pending
+approval. The tool function is not invoked until an approval event resumes
+the same logical call and idempotency key.
+
+Write and external tools receive an idempotency key generated before
+`tool_call_intended`. Replays and reconciliations reuse the same key.
+Write/external replay returns recorded or synthesized results and does not
+blindly double-execute side effects.
+
+The Safety Governor evaluates predicates mechanically: forbidden patterns,
+scope checks, approval policy, then allow. Scope violations deny. Every
+safety decision is recorded with an input digest rather than raw input.
+
+The Phase 5B starter tools are:
+
+- `fs.read`
+- `fs.write`
+- `fs.delete`
+- `shell.exec`
+- `http.fetch`
+- `sleep.wait`
+
+Legacy `shell.run` and `shell.runInteractive` remain registered through
+the manifest-backed runtime for compatibility.
