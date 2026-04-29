@@ -28,6 +28,27 @@ public final class DaemonLifecycleCoordinator: @unchecked Sendable {
     ownedLocks.append(handle)
   }
 
+  public func daemonStarted() throws {
+    try eventStore.append(
+      taskId: PlatformEvent.taskId,
+      eventType: "daemon_started",
+      payload: [
+        "daemonInstanceId": .string(lockController.daemonInstanceId)
+      ]
+    )
+  }
+
+  public func shutdown() throws {
+    try drainWrites()
+    try eventStore.append(
+      taskId: PlatformEvent.taskId,
+      eventType: "daemon_shutdown",
+      payload: [
+        "daemonInstanceId": .string(lockController.daemonInstanceId)
+      ]
+    )
+  }
+
   public func willSleep() throws {
     try drainWrites()
     heartbeatsPaused = true

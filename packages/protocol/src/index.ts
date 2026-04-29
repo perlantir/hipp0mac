@@ -426,6 +426,8 @@ export const ToolErrorSchema = z.object({
 export const ToolReplayMetadataSchema = z.object({
   inputHash: z.string(),
   workspaceRoot: z.string().optional(),
+  intendedEventId: idSchema.optional(),
+  resultEventId: idSchema.optional(),
   startedAt: isoDateTimeSchema,
   completedAt: isoDateTimeSchema.optional(),
   attempts: z.number().int().positive().default(1)

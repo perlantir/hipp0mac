@@ -11,6 +11,8 @@ import {
   type ToolResult,
   type ToolRiskLevel
 } from "@operator-dock/protocol";
+import { ProjectionCipher } from "../../db/projectionCipher.js";
+import type { CanonicalEventStore } from "../../events/canonicalEventStore.js";
 import type { EventBus } from "../../websocket/eventBus.js";
 
 export interface CreateExecutionInput {
@@ -44,15 +46,29 @@ interface ToolEventRow {
 export class ToolEventStore {
   constructor(
     private readonly database: DatabaseSync,
-    private readonly eventBus: EventBus
+    private readonly eventBus: EventBus,
+    private readonly canonicalEvents: CanonicalEventStore,
+    private readonly cipher: ProjectionCipher
   ) {}
 
   createExecution(input: CreateExecutionInput): ToolResult {
     const now = new Date().toISOString();
     const executionId = randomUUID();
+    const intendedEventId = this.canonicalEvents.append({
+      taskId: executionId,
+      eventType: "tool_call_intended",
+      payload: {
+        executionId,
+        toolName: input.toolName,
+        input: input.input,
+        riskLevel: input.riskLevel,
+        ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot })
+      }
+    });
     const replay = {
       inputHash: hashJson(input.input),
       workspaceRoot: input.workspaceRoot,
+      intendedEventId,
       startedAt: now,
       attempts: 1
     };
@@ -66,17 +82,21 @@ export class ToolEventStore {
           risk_level,
           input_json,
           replay_json,
+          legacy,
+          intended_event_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         executionId,
         input.toolName,
         "running",
         input.riskLevel,
-        JSON.stringify(input.input),
-        JSON.stringify(replay),
+        this.cipher.encrypt(JSON.stringify(input.input)),
+        this.cipher.encrypt(JSON.stringify(replay)),
+        0,
+        intendedEventId,
         now,
         now
       );
@@ -129,25 +149,25 @@ export class ToolEventStore {
       status: row.status,
       riskLevel: row.risk_level,
       ok: row.status === "completed",
-      ...(row.output_json === null ? {} : { output: JSON.parse(row.output_json) as JsonValue }),
+      ...(row.output_json === null ? {} : { output: JSON.parse(this.cipher.decrypt(row.output_json)) as JsonValue }),
       ...(row.error_code === null || row.error_message === null
         ? {}
         : {
           error: {
             code: row.error_code,
-            message: row.error_message
+            message: this.cipher.decrypt(row.error_message)
           }
         }),
-      ...(row.raw_output_ref === null ? {} : { rawOutputRef: row.raw_output_ref }),
+      ...(row.raw_output_ref === null ? {} : { rawOutputRef: this.cipher.decrypt(row.raw_output_ref) }),
       events: events.map((event) => ToolEventRecordSchema.parse({
         id: event.id,
         executionId: event.execution_id,
         toolName: event.tool_name,
         type: event.event_type,
         createdAt: event.created_at,
-        payload: JSON.parse(event.payload_json) as Record<string, JsonValue>
+        payload: JSON.parse(this.cipher.decrypt(event.payload_json)) as Record<string, JsonValue>
       })),
-      replay: JSON.parse(row.replay_json) as JsonValue
+      replay: JSON.parse(this.cipher.decrypt(row.replay_json)) as JsonValue
     });
   }
 
@@ -175,15 +195,17 @@ export class ToolEventStore {
           tool_name,
           event_type,
           payload_json,
+          legacy,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         event.id,
         event.executionId,
         event.toolName,
         event.type,
-        JSON.stringify(event.payload),
+        this.cipher.encrypt(JSON.stringify(event.payload)),
+        0,
         event.createdAt
       );
 
@@ -214,9 +236,26 @@ export class ToolEventStore {
       || status === "failed"
       || status === "cancelled"
       || status === "timed_out";
+    const resultEventId = terminal
+      ? this.canonicalEvents.append({
+        taskId: result.executionId,
+        eventType: "tool_call_result",
+        payload: {
+          executionId: result.executionId,
+          toolName: result.toolName,
+          status,
+          ok: status === "completed",
+          ...(output === undefined ? {} : { output }),
+          ...(errorCode === undefined ? {} : { errorCode }),
+          ...(errorMessage === undefined ? {} : { errorMessage }),
+          ...(rawOutputRef === undefined ? {} : { rawOutputRef })
+        }
+      })
+      : undefined;
     const replay = terminal
       ? {
         ...result.replay,
+        ...(resultEventId === undefined ? {} : { resultEventId }),
         completedAt: now
       }
       : result.replay;
@@ -231,16 +270,19 @@ export class ToolEventStore {
           error_message = ?,
           raw_output_ref = ?,
           replay_json = ?,
+          legacy = 0,
+          result_event_id = COALESCE(?, result_event_id),
           updated_at = ?
         WHERE id = ?
       `)
       .run(
         status,
-        output === undefined ? null : JSON.stringify(output),
+        output === undefined ? null : this.cipher.encrypt(JSON.stringify(output)),
         errorCode ?? null,
-        errorMessage ?? null,
-        rawOutputRef ?? null,
-        JSON.stringify(replay),
+        errorMessage === undefined ? null : this.cipher.encrypt(errorMessage),
+        rawOutputRef === undefined ? null : this.cipher.encrypt(rawOutputRef),
+        this.cipher.encrypt(JSON.stringify(replay)),
+        resultEventId ?? null,
         now,
         result.executionId
       );
@@ -311,7 +353,7 @@ export class ToolEventStore {
 
     this.database
       .prepare("UPDATE tool_executions SET replay_json = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(replay), new Date().toISOString(), result.executionId);
+      .run(this.cipher.encrypt(JSON.stringify(replay)), new Date().toISOString(), result.executionId);
 
     return {
       ...result,

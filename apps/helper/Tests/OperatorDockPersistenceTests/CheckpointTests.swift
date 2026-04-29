@@ -24,6 +24,28 @@ final class CheckpointTests: XCTestCase {
     XCTAssertEqual(loaded.derivedState, expected)
   }
 
+  func testCheckpointWriteEmitsCheckpointWrittenEvent() throws {
+    let harness = try CheckpointHarness()
+    let eventId = try harness.eventStore.append(
+      taskId: "task-checkpoint-event",
+      eventType: "task_created",
+      payload: ["value": .number(1)]
+    )
+
+    try harness.checkpoints.writeCheckpoint(
+      taskId: "task-checkpoint-event",
+      eventId: eventId,
+      derivedState: Data("checkpoint-event-state".utf8)
+    )
+
+    let events = try harness.eventStore.readAll(taskId: "task-checkpoint-event")
+    let checkpointEvent = try XCTUnwrap(events.last)
+    let loaded = try XCTUnwrap(harness.checkpoints.loadCheckpoint(taskId: "task-checkpoint-event", eventId: eventId))
+    XCTAssertEqual(checkpointEvent.eventType, "checkpoint_written")
+    XCTAssertEqual(checkpointEvent.payload["representedEventId"], .string(eventId))
+    XCTAssertEqual(checkpointEvent.payload["integrityHash"], .string(loaded.integrityHash))
+  }
+
   func testCheckpointCorruptionFallsBackToFullReplay() throws {
     let harness = try CheckpointHarness()
     let ids = try harness.appendNumberedEvents(taskId: "task-corrupt", count: 4)
@@ -79,7 +101,7 @@ private final class CheckpointHarness {
       .appendingPathComponent("operator-dock-checkpoints-\(UUID().uuidString)", isDirectory: true))
     try paths.createLayout()
     eventStore = EventStore(paths: paths, keys: keys)
-    checkpoints = CheckpointStore(paths: paths, keys: keys)
+    checkpoints = CheckpointStore(paths: paths, keys: keys, eventStore: eventStore)
     recovery = CheckpointRecovery(eventStore: eventStore, checkpoints: checkpoints)
   }
 

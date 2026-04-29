@@ -24,6 +24,54 @@ final class FoundationSecurityTests: XCTestCase {
     }
   }
 
+  func testProductionLayoutMigratesLegacyV0ApplicationSupportState() throws {
+    let applicationSupport = try temporaryDirectory()
+    let legacyRoot = applicationSupport.appendingPathComponent("OperatorDock", isDirectory: true)
+    let legacyEventStore = legacyRoot.appendingPathComponent("event-store", isDirectory: true)
+    let legacyTasks = legacyRoot.appendingPathComponent("tasks", isDirectory: true)
+    try FileManager.default.createDirectory(at: legacyEventStore, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: legacyTasks, withIntermediateDirectories: true)
+    try Data("legacy-event".utf8).write(to: legacyEventStore.appendingPathComponent("task-1.log"))
+    try Data("legacy-task".utf8).write(to: legacyTasks.appendingPathComponent("task-1.json"))
+
+    let paths = try OperatorDockPaths.production(applicationSupportDirectory: applicationSupport)
+
+    XCTAssertEqual(paths.root, legacyRoot.appendingPathComponent("state", isDirectory: true).standardizedFileURL)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: paths.eventStore.appendingPathComponent("task-1.log").path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: paths.tasks.appendingPathComponent("task-1.json").path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: paths.root.appendingPathComponent(OperatorDockPaths.migrationMarkerFilename).path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: legacyEventStore.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: legacyTasks.path))
+  }
+
+  func testProductionLayoutMarkerPreventsRepeatedMigration() throws {
+    let applicationSupport = try temporaryDirectory()
+    let operatorDockRoot = applicationSupport.appendingPathComponent("OperatorDock", isDirectory: true)
+    let stateRoot = operatorDockRoot.appendingPathComponent("state", isDirectory: true)
+    try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+    try Data("already migrated".utf8).write(to: stateRoot.appendingPathComponent(OperatorDockPaths.migrationMarkerFilename))
+
+    let paths = try OperatorDockPaths.production(applicationSupportDirectory: applicationSupport)
+
+    XCTAssertEqual(paths.root, stateRoot.standardizedFileURL)
+  }
+
+  func testProductionLayoutMigrationFailsWhenDestinationExists() throws {
+    let applicationSupport = try temporaryDirectory()
+    let legacyRoot = applicationSupport.appendingPathComponent("OperatorDock", isDirectory: true)
+    try FileManager.default.createDirectory(at: legacyRoot.appendingPathComponent("event-store", isDirectory: true), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: legacyRoot
+        .appendingPathComponent("state", isDirectory: true)
+        .appendingPathComponent("event-store", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+
+    XCTAssertThrowsError(try OperatorDockPaths.production(applicationSupportDirectory: applicationSupport)) { error in
+      XCTAssertTrue((error as? PersistencePlatformError)?.errorDescription?.contains("destination already exists") == true)
+    }
+  }
+
   func testKeychainKeysGeneratedOnFirstLaunchWithRequiredAccessClass() throws {
     let keychain = MockKeychainClient()
     let manager = PersistenceKeyManager(keychain: keychain)

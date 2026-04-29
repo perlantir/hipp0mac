@@ -9,8 +9,10 @@ import {
 } from "@operator-dock/protocol";
 import { loadConfig } from "../src/config.js";
 import { buildApp } from "../src/server.js";
+import { InMemoryCanonicalEventStore } from "../src/events/canonicalEventStore.js";
 import { classifyShellCommand } from "../src/tools/shell/commandRiskClassifier.js";
 import { EventBus } from "../src/websocket/eventBus.js";
+import { authHeaders, authStore } from "./harness.js";
 
 const tempRoots = new Set<string>();
 
@@ -38,15 +40,19 @@ async function configuredApp() {
   const root = tempRoot("operator-dock-runtime-");
   const workspaceRoot = join(root, "workspace");
   const eventBus = new EventBus();
+  const canonicalEventStore = new InMemoryCanonicalEventStore();
   const app = await buildApp({
     config: testConfig(root),
     eventBus,
+    canonicalEventStore,
+    authTokenStore: authStore(),
     logger: false
   });
 
   const workspaceResponse = await app.inject({
     method: "PUT",
     url: "/v1/workspace",
+    headers: authHeaders(),
     payload: {
       rootPath: workspaceRoot
     }
@@ -57,7 +63,8 @@ async function configuredApp() {
     app,
     root,
     workspaceRoot,
-    eventBus
+    eventBus,
+    canonicalEventStore
   };
 }
 
@@ -68,6 +75,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "fs.write",
         input: {
@@ -110,6 +118,7 @@ describe("tool runtime safety governor", () => {
     const pendingResponse = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -125,7 +134,8 @@ describe("tool runtime safety governor", () => {
 
     const approvalsResponse = await app.inject({
       method: "GET",
-      url: "/v1/tools/approvals"
+      url: "/v1/tools/approvals",
+      headers: authHeaders()
     });
     const approvals = ToolApprovalListResponseSchema.parse(approvalsResponse.json()).approvals;
     expect(approvals.map((approval) => approval.id)).toContain(approvalId);
@@ -133,6 +143,7 @@ describe("tool runtime safety governor", () => {
     const resolvedResponse = await app.inject({
       method: "POST",
       url: `/v1/tools/approvals/${approvalId}/resolve`,
+      headers: authHeaders(),
       payload: {
         approved: true
       }
@@ -153,6 +164,7 @@ describe("tool runtime safety governor", () => {
     const running = app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -165,7 +177,8 @@ describe("tool runtime safety governor", () => {
     const executionId = await waitForExecutionId(events);
     const cancelResponse = await app.inject({
       method: "POST",
-      url: `/v1/tools/executions/${executionId}/cancel`
+      url: `/v1/tools/executions/${executionId}/cancel`,
+      headers: authHeaders()
     });
     expect(cancelResponse.statusCode).toBe(200);
 
@@ -184,6 +197,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         timeoutMs: 50,
@@ -206,6 +220,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -226,17 +241,18 @@ describe("tool runtime safety governor", () => {
     expect(readFileSync(result.rawOutputRef!, "utf8")).not.toContain("super-secret-token");
   });
 
-  it("records replay metadata and persists tool events", async () => {
-    const { app, root } = await configuredApp();
+  it("records canonical events first, then derives SQLite projection rows", async () => {
+    const { app, root, canonicalEventStore } = await configuredApp();
 
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "fs.write",
         input: {
           path: "tasks/replay.md",
-          content: "metadata"
+          content: "phase5-sensitive-payload-needle"
         },
         retry: 1
       }
@@ -249,6 +265,12 @@ describe("tool runtime safety governor", () => {
     expect(result.status).toBe("completed");
     expect(result.replay.inputHash).toHaveLength(64);
     expect(result.replay.attempts).toBe(1);
+    expect(result.replay.intendedEventId).toBe(canonicalEventStore.events[0].eventId);
+    expect(result.replay.resultEventId).toBe(canonicalEventStore.events.at(-1)?.eventId);
+    expect(canonicalEventStore.events.map((event) => event.eventType)).toEqual([
+      "tool_call_intended",
+      "tool_call_result"
+    ]);
     expect(result.events.map((event) => event.type)).toEqual(
       expect.arrayContaining(["tool.started", "tool.output", "tool.completed"])
     );
@@ -256,10 +278,90 @@ describe("tool runtime safety governor", () => {
 
     const database = new DatabaseSync(dbPath, { readOnly: true });
     const row = database
-      .prepare("SELECT COUNT(*) AS count FROM tool_events WHERE execution_id = ?")
-      .get(result.executionId) as { count: number };
+      .prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM tool_events WHERE execution_id = ?) AS event_count,
+          legacy,
+          intended_event_id,
+          result_event_id
+        FROM tool_executions
+        WHERE id = ?
+      `)
+      .get(result.executionId, result.executionId) as {
+        event_count: number;
+        legacy: number;
+        intended_event_id: string;
+        result_event_id: string;
+      };
     database.close();
-    expect(row.count).toBeGreaterThanOrEqual(3);
+    expect(row.event_count).toBeGreaterThanOrEqual(3);
+    expect(row.legacy).toBe(0);
+    expect(row.intended_event_id).toBe(result.replay.intendedEventId);
+    expect(row.result_event_id).toBe(result.replay.resultEventId);
+    const rawDatabase = readFileSync(dbPath, "utf8");
+    expect(rawDatabase).not.toContain("phase5-sensitive-payload-needle");
+    expect(rawDatabase).not.toContain("tasks/replay.md");
+  });
+
+  it("marks existing projection rows as legacy and emits one canonical daemon event", async () => {
+    const root = tempRoot("operator-dock-legacy-projection-");
+    const dbPath = join(root, "operator-dock.sqlite");
+    const database = new DatabaseSync(dbPath);
+    database.exec("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);");
+    for (const file of ["001_initial_schema.sql", "002_tool_runtime.sql"]) {
+      database.exec(readFileSync(resolve("migrations", file), "utf8"));
+      database.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(file, new Date().toISOString());
+    }
+    database
+      .prepare(`
+        INSERT INTO tool_executions (
+          id,
+          tool_name,
+          status,
+          risk_level,
+          input_json,
+          replay_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        "legacy-execution",
+        "fs.write",
+        "completed",
+        "medium",
+        JSON.stringify({ path: "tasks/legacy.md" }),
+        "{}",
+        new Date().toISOString(),
+        new Date().toISOString()
+      );
+    database.close();
+
+    const canonicalEventStore = new InMemoryCanonicalEventStore();
+    const app = await buildApp({
+      config: testConfig(root),
+      authTokenStore: authStore(),
+      canonicalEventStore,
+      logger: false
+    });
+    await app.close();
+
+    const reopened = new DatabaseSync(dbPath, { readOnly: true });
+    const row = reopened
+      .prepare("SELECT legacy FROM tool_executions WHERE id = ?")
+      .get("legacy-execution") as { legacy: number };
+    reopened.close();
+
+    expect(row.legacy).toBe(1);
+    expect(canonicalEventStore.events).toHaveLength(1);
+    expect(canonicalEventStore.events[0]).toMatchObject({
+      taskId: "daemon",
+      eventType: "legacy_data_present",
+      payload: {
+        total: 1,
+        toolExecutions: 1
+      }
+    });
   });
 });
 

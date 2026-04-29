@@ -1,0 +1,21 @@
+Filename                             Regions    Missed Regions     Cover   Functions  Missed Functions  Executed       Lines      Missed Lines     Cover    Branches   Missed Branches     Cover
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+AESGCMRecordCodec.swift                   26                 3    88.46%           8                 0   100.00%          68                 3    95.59%           0                 0         -
+CheckpointStore.swift                     68                 6    91.18%          20                 1    95.00%         171                 7    95.91%           0                 0         -
+DaemonLifecycleCoordinator.swift          23                 1    95.65%           8                 0   100.00%          57                 0   100.00%           0                 0         -
+EncryptedRecordFile.swift                 42                 7    83.33%           9                 0   100.00%         108                 8    92.59%           0                 0         -
+EventRecord.swift                         24                 1    95.83%          15                 1    93.33%          75                 1    98.67%           0                 0         -
+EventStore.swift                          46                 4    91.30%          14                 0   100.00%          94                 4    95.74%           0                 0         -
+JSONValue.swift                           20                 0   100.00%           2                 0   100.00%          35                 0   100.00%           0                 0         -
+Keychain.swift                            50                12    76.00%          21                 3    85.71%         136                40    70.59%           0                 0         -
+Launchd.swift                              8                 0   100.00%           5                 0   100.00%          36                 0   100.00%           0                 0         -
+LockController.swift                     107                11    89.72%          27                 1    96.30%         282                13    95.39%           0                 0         -
+OperatorDockPaths.swift                   29                 2    93.10%           7                 0   100.00%          93                 2    97.85%           0                 0         -
+PersistenceErrors.swift                   13                 0   100.00%           2                 0   100.00%          22                 0   100.00%           0                 0         -
+SchemaMigration.swift                     46                 8    82.61%          21                 4    80.95%         104                 8    92.31%           0                 0         -
+SecretLogAuditor.swift                    21                 1    95.24%           4                 0   100.00%          34                 1    97.06%           0                 0         -
+TaskMetadataStore.swift                   31                 5    83.87%           9                 1    88.89%          92                 5    94.57%           0                 0         -
+UUIDV7.swift                               7                 0   100.00%           7                 0   100.00%          43                 0   100.00%           0                 0         -
+XPCSecurity.swift                         28                17    39.29%          12                 5    58.33%         105                62    40.95%           0                 0         -
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                                    589                78    86.76%         191                16    91.62%        1555               154    90.10%           0                 0         -

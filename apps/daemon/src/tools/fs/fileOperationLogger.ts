@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { JsonValue } from "@operator-dock/protocol";
+import { ProjectionCipher } from "../../db/projectionCipher.js";
 
 export interface FileOperationLogInput {
   executionId?: string;
@@ -14,7 +15,10 @@ export interface FileOperationLogInput {
 }
 
 export class FileOperationLogger {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(
+    private readonly database: DatabaseSync,
+    private readonly cipher: ProjectionCipher
+  ) {}
 
   log(input: FileOperationLogInput): void {
     this.database
@@ -29,21 +33,22 @@ export class FileOperationLogger {
           approval_required,
           reason,
           metadata_json,
+          legacy,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         randomUUID(),
         input.executionId ?? null,
         input.operation,
-        input.primaryPath,
-        input.secondaryPath ?? null,
+        this.cipher.encrypt(input.primaryPath),
+        this.cipher.encryptNullable(input.secondaryPath ?? null),
         input.allowed ? 1 : 0,
         input.approvalRequired ? 1 : 0,
-        input.reason ?? null,
-        JSON.stringify(input.metadata ?? {}),
+        this.cipher.encryptNullable(input.reason ?? null),
+        this.cipher.encrypt(JSON.stringify(input.metadata ?? {})),
+        0,
         new Date().toISOString()
       );
   }
 }
-

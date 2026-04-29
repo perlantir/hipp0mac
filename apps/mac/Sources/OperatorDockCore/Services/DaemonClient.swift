@@ -22,16 +22,19 @@ public struct DaemonClient: Sendable {
   public let webSocketURL: URL
 
   private let session: URLSession
+  private let bearerToken: String?
   private let decoder = JSONDecoder()
   private let encoder = JSONEncoder()
 
   public init(
     baseURL: URL = URL(string: "http://127.0.0.1:4768")!,
     webSocketURL: URL = URL(string: "ws://127.0.0.1:4768/v1/events")!,
+    bearerToken: String? = DaemonAuthTokenStore().readToken(),
     session: URLSession = .shared
   ) {
     self.baseURL = baseURL
     self.webSocketURL = webSocketURL
+    self.bearerToken = bearerToken
     self.session = session
   }
 
@@ -106,6 +109,7 @@ public struct DaemonClient: Sendable {
 
     var request = URLRequest(url: components.url!)
     request.httpMethod = "GET"
+    applyAuth(to: &request)
     let response: FileListResponse = try await send(request)
     return response.entries
   }
@@ -125,7 +129,9 @@ public struct DaemonClient: Sendable {
 
   public func events() -> AsyncThrowingStream<OperatorEvent, Error> {
     AsyncThrowingStream { continuation in
-      let task = session.webSocketTask(with: webSocketURL)
+      var request = URLRequest(url: webSocketURL)
+      applyAuth(to: &request)
+      let task = session.webSocketTask(with: request)
       task.resume()
       receiveNextMessage(from: task, continuation: continuation)
 
@@ -138,6 +144,7 @@ public struct DaemonClient: Sendable {
   private func get<Response: Decodable>(_ path: String) async throws -> Response {
     var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
     request.httpMethod = "GET"
+    applyAuth(to: &request)
     return try await send(request)
   }
 
@@ -148,6 +155,7 @@ public struct DaemonClient: Sendable {
     var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "content-type")
+    applyAuth(to: &request)
     request.httpBody = try encoder.encode(body)
     return try await send(request)
   }
@@ -159,6 +167,7 @@ public struct DaemonClient: Sendable {
     var request = URLRequest(url: endpoint(path))
     request.httpMethod = "PUT"
     request.setValue("application/json", forHTTPHeaderField: "content-type")
+    applyAuth(to: &request)
     request.httpBody = try encoder.encode(body)
     return try await send(request)
   }
@@ -166,11 +175,20 @@ public struct DaemonClient: Sendable {
   private func postWithoutBody<Response: Decodable>(_ path: String) async throws -> Response {
     var request = URLRequest(url: endpoint(path))
     request.httpMethod = "POST"
+    applyAuth(to: &request)
     return try await send(request)
   }
 
   private func endpoint(_ path: String) -> URL {
     baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+  }
+
+  private func applyAuth(to request: inout URLRequest) {
+    guard let bearerToken else {
+      return
+    }
+
+    request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "authorization")
   }
 
   private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {

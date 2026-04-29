@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { Writable } from "node:stream";
 import type { DatabaseSync } from "node:sqlite";
+import { dirname, join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import {
@@ -12,10 +14,24 @@ import {
 import { loadConfig, type DaemonConfig } from "./config.js";
 import { openDatabase } from "./db/connection.js";
 import { runMigrations } from "./db/migrations.js";
+import { ProjectionCipher } from "./db/projectionCipher.js";
+import { encryptProjectionRows } from "./db/projectionEncryptionMigration.js";
 import { ApiError } from "./errors.js";
+import {
+  EncryptedFileCanonicalEventStore,
+  type CanonicalEventStore
+} from "./events/canonicalEventStore.js";
+import { emitLegacyProjectionNoticeIfNeeded } from "./events/legacyProjectionMigration.js";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/credentialStore.js";
 import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
 import { registerProviderRoutes } from "./providers/routes.js";
+import {
+  bearerTokenFromAuthorizationHeader,
+  isAuthorizedBearerToken,
+  MacOSKeychainDaemonAuthTokenStore,
+  type DaemonAuthTokenStore
+} from "./security/daemonAuth.js";
+import { redactedFastifyLoggerOptions } from "./security/redactedLogger.js";
 import { TaskRepository } from "./tasks/taskRepository.js";
 import { fsToolDefinitions } from "./tools/fs/fsToolDefinitions.js";
 import { FileOperationLogger } from "./tools/fs/fileOperationLogger.js";
@@ -35,7 +51,10 @@ export interface BuildAppOptions {
   database?: DatabaseSync;
   eventBus?: EventBus;
   credentialStore?: CredentialStore;
+  authTokenStore?: DaemonAuthTokenStore;
+  canonicalEventStore?: CanonicalEventStore;
   logger?: boolean;
+  logStream?: Writable;
   migrate?: boolean;
 }
 
@@ -45,18 +64,27 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const database = options.database ?? openDatabase(config.databasePath);
   const eventBus = options.eventBus ?? new EventBus();
   const credentialStore = options.credentialStore ?? new MacOSKeychainCredentialStore();
+  const bearerToken = await (options.authTokenStore ?? new MacOSKeychainDaemonAuthTokenStore()).loadOrCreateToken();
+  const projectionCipher = new ProjectionCipher(bearerToken);
+  const canonicalEventStore = options.canonicalEventStore
+    ?? new EncryptedFileCanonicalEventStore(
+      join(dirname(config.databasePath), "event-store", "node-projection-events.log"),
+      bearerToken
+    );
 
   if (options.migrate !== false) {
     runMigrations(database, config.migrationsDir);
+    encryptProjectionRows(database, projectionCipher);
+    emitLegacyProjectionNoticeIfNeeded(database, canonicalEventStore);
   }
 
   const tasks = new TaskRepository(database);
   const providerSettings = new ProviderSettingsRepository(database);
   const workspace = new WorkspaceService(new WorkspaceSettingsRepository(database));
-  const toolEvents = new ToolEventStore(database, eventBus);
-  const fileLogger = new FileOperationLogger(database);
+  const toolEvents = new ToolEventStore(database, eventBus, canonicalEventStore, projectionCipher);
+  const fileLogger = new FileOperationLogger(database, projectionCipher);
   const fsTools = new FsToolService(workspace, toolEvents, fileLogger);
-  const toolApprovals = new ToolApprovalStore(database);
+  const toolApprovals = new ToolApprovalStore(database, projectionCipher);
   const toolRuntime = new ToolRuntime({
     workspace,
     events: toolEvents,
@@ -68,7 +96,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   toolRuntime.register(shellRunTool());
   toolRuntime.register(shellRunInteractiveTool());
   const app = Fastify({
-    logger: options.logger ?? true
+    logger: options.logger === false ? false : redactedFastifyLoggerOptions(options.logStream)
+  });
+
+  app.addHook("onRequest", async (request, reply) => {
+    const actual = bearerTokenFromAuthorizationHeader(request.headers.authorization);
+    if (!isAuthorizedBearerToken(actual, bearerToken)) {
+      return reply.status(401).send({
+        error: {
+          code: "AUTH_REQUIRED",
+          message: "Operator Dock daemon bearer token is required."
+        }
+      });
+    }
   });
 
   app.setErrorHandler((error, _request, reply) => {

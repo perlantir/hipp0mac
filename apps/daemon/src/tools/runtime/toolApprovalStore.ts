@@ -6,6 +6,7 @@ import {
   type ToolApproval,
   type ToolRiskLevel
 } from "@operator-dock/protocol";
+import { ProjectionCipher } from "../../db/projectionCipher.js";
 
 export interface CreateToolApprovalInput {
   executionId: string;
@@ -34,7 +35,10 @@ interface ToolApprovalRow {
 }
 
 export class ToolApprovalStore {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(
+    private readonly database: DatabaseSync,
+    private readonly cipher: ProjectionCipher
+  ) {}
 
   create(input: CreateToolApprovalInput): StoredToolApproval {
     const now = new Date().toISOString();
@@ -69,10 +73,10 @@ export class ToolApprovalStore {
         approval.executionId,
         approval.toolName,
         approval.riskLevel,
-        approval.reason,
+        this.cipher.encrypt(approval.reason),
         approval.status,
-        JSON.stringify(approval.input),
-        approval.token,
+        this.cipher.encrypt(JSON.stringify(approval.input)),
+        this.cipher.encrypt(approval.token),
         approval.createdAt
       );
 
@@ -88,7 +92,7 @@ export class ToolApprovalStore {
       .prepare("SELECT * FROM tool_approvals WHERE status = 'pending' ORDER BY created_at ASC")
       .all() as unknown as ToolApprovalRow[];
 
-    return rows.map((row) => publicApproval(row));
+    return rows.map((row) => publicApproval(row, this.cipher));
   }
 
   get(id: string): StoredToolApproval | undefined {
@@ -96,7 +100,7 @@ export class ToolApprovalStore {
       .prepare("SELECT * FROM tool_approvals WHERE id = ?")
       .get(id) as ToolApprovalRow | undefined;
 
-    return row === undefined ? undefined : storedApproval(row);
+    return row === undefined ? undefined : storedApproval(row, this.cipher);
   }
 
   resolve(id: string, approved: boolean): StoredToolApproval | undefined {
@@ -114,25 +118,25 @@ export class ToolApprovalStore {
   }
 }
 
-function publicApproval(row: ToolApprovalRow): ToolApproval {
+function publicApproval(row: ToolApprovalRow, cipher: ProjectionCipher): ToolApproval {
   return ToolApprovalSchema.parse({
     id: row.id,
     executionId: row.execution_id,
     toolName: row.tool_name,
     riskLevel: row.risk_level,
-    reason: row.reason,
+    reason: cipher.decrypt(row.reason),
     status: row.status,
     createdAt: row.created_at,
     ...(row.resolved_at === null ? {} : { resolvedAt: row.resolved_at })
   });
 }
 
-function storedApproval(row: ToolApprovalRow): StoredToolApproval {
-  const approval = publicApproval(row);
+function storedApproval(row: ToolApprovalRow, cipher: ProjectionCipher): StoredToolApproval {
+  const approval = publicApproval(row, cipher);
   return {
     ...approval,
-    input: JSON.parse(row.input_json) as Record<string, JsonValue>,
-    token: row.token
+    input: JSON.parse(cipher.decrypt(row.input_json)) as Record<string, JsonValue>,
+    token: cipher.decrypt(row.token)
   };
 }
 

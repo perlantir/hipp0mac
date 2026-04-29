@@ -13,9 +13,11 @@
     "build": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run build -w @operator-dock/daemon",
     "dev": "npm run dev -w @operator-dock/daemon",
     "daemon": "npm run dev -w @operator-dock/daemon",
+    "helper:build": "swift build --package-path apps/helper",
+    "helper:test": "swift test --package-path apps/helper",
     "mac:build": "swift build --package-path apps/mac",
     "mac:run": "./script/build_and_run.sh",
-    "test": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run test -w @operator-dock/protocol && npm run test -w @operator-dock/daemon && swift test --package-path apps/mac",
+    "test": "npm run build -w @operator-dock/protocol && npm run build -w @operator-dock/shared && npm run test -w @operator-dock/protocol && npm run test -w @operator-dock/daemon && swift test --package-path apps/mac && swift test --package-path apps/helper",
     "typecheck": "npm run typecheck -w @operator-dock/protocol && npm run typecheck -w @operator-dock/shared && npm run typecheck -w @operator-dock/daemon"
   },
   "engines": {

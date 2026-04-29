@@ -40,15 +40,18 @@ public final class CheckpointStore: @unchecked Sendable {
   private let paths: OperatorDockPaths
   private let codec: AESGCMRecordCodec
   private let fsyncRecorder: FsyncRecorder
+  private let eventStore: EventStore?
 
   public init(
     paths: OperatorDockPaths,
     keys: PersistenceKeys,
-    fsyncRecorder: FsyncRecorder = FsyncRecorder()
+    fsyncRecorder: FsyncRecorder = FsyncRecorder(),
+    eventStore: EventStore? = nil
   ) {
     self.paths = paths
     self.codec = AESGCMRecordCodec(keys: keys)
     self.fsyncRecorder = fsyncRecorder
+    self.eventStore = eventStore
   }
 
   public func writeCheckpoint(taskId: String, eventId: String, derivedState: Data) throws {
@@ -60,6 +63,14 @@ public final class CheckpointStore: @unchecked Sendable {
     )
     let encrypted = try codec.seal(record.encoded()).bytes
     try syncWriteFile(encrypted, to: checkpointURL(taskId: taskId, eventId: eventId), fsyncRecorder: fsyncRecorder, eventId: eventId)
+    try eventStore?.append(
+      taskId: taskId,
+      eventType: "checkpoint_written",
+      payload: [
+        "representedEventId": .string(eventId),
+        "integrityHash": .string(record.integrityHash)
+      ]
+    )
   }
 
   public func latestCheckpoint(taskId: String) throws -> CheckpointRecord? {

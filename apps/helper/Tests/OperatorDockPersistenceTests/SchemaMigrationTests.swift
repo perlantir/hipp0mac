@@ -23,6 +23,28 @@ final class SchemaMigrationTests: XCTestCase {
     ])
   }
 
+  func testEventStoreMigrationAuditSinkEmitsSchemaMigrationAppliedEvent() throws {
+    let paths = try OperatorDockPaths(root: FileManager.default.temporaryDirectory
+      .appendingPathComponent("operator-dock-migration-event-\(UUID().uuidString)", isDirectory: true))
+    try paths.createLayout()
+    let keys = PersistenceKeys(
+      encryptionKeyBytes: Data(repeating: 0x41, count: 32),
+      hmacKeyBytes: Data(repeating: 0x42, count: 32)
+    )
+    let eventStore = EventStore(paths: paths, keys: keys)
+    let engine = SchemaMigrationEngine(auditSink: EventStoreMigrationAuditSink(eventStore: eventStore))
+
+    _ = try engine.decodeEventRecord(from: Self.v0EventFixture)
+
+    let auditEvents = try eventStore.readAll(taskId: "task-migration")
+    let event = try XCTUnwrap(auditEvents.last)
+    XCTAssertEqual(event.eventType, "schema_migration_applied")
+    XCTAssertEqual(event.payload["recordKind"], .string("event"))
+    XCTAssertEqual(event.payload["recordId"], .string("018f2b9c-7c00-7000-8000-000000000001"))
+    XCTAssertEqual(event.payload["fromVersion"], .number(0))
+    XCTAssertEqual(event.payload["toVersion"], .number(1))
+  }
+
   func testUnknownFutureVersionHardErrors() throws {
     let engine = SchemaMigrationEngine(auditSink: RecordingMigrationAuditSink())
     var object = try Self.v1EventObject()

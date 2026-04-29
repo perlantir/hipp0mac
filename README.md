@@ -1,11 +1,12 @@
 # Operator Dock
 
-Operator Dock is a Mac-first autonomous AI agent workspace. This repository starts with a native SwiftUI macOS shell, a local TypeScript daemon, shared protocol schemas, and local SQLite persistence.
+Operator Dock is a Mac-first autonomous AI agent workspace. This repository starts with a native SwiftUI macOS shell, a local TypeScript daemon, a Swift helper persistence foundation, shared protocol schemas, and local encrypted persistence.
 
 ## Structure
 
 - `apps/mac` - SwiftUI macOS app built with Swift Package Manager.
 - `apps/daemon` - local Node/TypeScript daemon with HTTP, WebSocket events, SQLite, and migrations.
+- `apps/helper` - SwiftPM helper package for the Phase 5A signed persistence daemon foundation.
 - `packages/protocol` - shared zod schemas for task events, tool calls, approvals, artifacts, and model messages.
 - `packages/shared` - shared TypeScript utilities and default daemon connection settings.
 - `docs` - architecture notes, roadmap, design handoff, and local API docs.
@@ -36,6 +37,13 @@ Run the Mac app:
 npm run mac:run
 ```
 
+Build and test the Phase 5A helper:
+
+```bash
+npm run helper:build
+npm run helper:test
+```
+
 The Codex desktop Run action is wired to `./script/build_and_run.sh` and launches the SwiftPM app as a real `.app` bundle from `dist/OperatorDock.app`.
 
 ## Local Daemon
@@ -46,6 +54,18 @@ Default daemon address:
 http://127.0.0.1:4768
 ws://127.0.0.1:4768/v1/events
 ```
+
+The daemon refuses non-loopback bind hosts by default. `OPERATOR_DOCK_HOST` must be `127.0.0.1` or `::1` unless `OPERATOR_DOCK_ALLOW_NETWORK_BIND=1` is set for an explicit network-binding deployment.
+
+HTTP requests and WebSocket upgrades require a bearer token stored in macOS Keychain under service `com.perlantir.operatordock.daemon`, account `daemon:httpBearerToken`. The Mac app reads the same token and attaches it automatically.
+
+Daemon state lives under:
+
+```text
+~/Library/Application Support/OperatorDock/state/
+```
+
+The daemon migrates the earlier `~/.operator-dock` layout into the state directory once and writes `.migrated-from-v0`.
 
 Useful endpoints:
 
@@ -71,7 +91,9 @@ Useful endpoints:
 Example task creation:
 
 ```bash
+export OPERATOR_DOCK_DAEMON_TOKEN="$(security find-generic-password -s com.perlantir.operatordock.daemon -a daemon:httpBearerToken -w)"
 curl -s http://127.0.0.1:4768/v1/tasks \
+  -H "authorization: Bearer $OPERATOR_DOCK_DAEMON_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"title":"Smoke test","prompt":"Create a test task from curl"}'
 ```
@@ -83,6 +105,8 @@ npm test
 ```
 
 This runs TypeScript package tests and SwiftPM tests for the macOS app core networking helpers.
+
+Phase 5A persistence documentation lives in `docs/phase-5a`.
 
 ## Product Context
 

@@ -3,6 +3,19 @@ import XCTest
 @testable import OperatorDockPersistence
 
 final class LifecycleCoordinatorTests: XCTestCase {
+  func testDaemonStartAndShutdownEmitPlatformEvents() throws {
+    let harness = try LifecycleHarness()
+
+    try harness.lifecycle.daemonStarted()
+    try harness.lifecycle.shutdown()
+
+    let platformEvents = try harness.eventStore.readAll(taskId: PlatformEvent.taskId)
+    XCTAssertEqual(platformEvents.map(\.eventType), ["daemon_started", "daemon_shutdown"])
+    XCTAssertEqual(platformEvents[0].payload["daemonInstanceId"], .string("daemon-life"))
+    XCTAssertEqual(platformEvents[1].payload["daemonInstanceId"], .string("daemon-life"))
+    XCTAssertEqual(harness.drainCount, 1)
+  }
+
   func testWillSleepDrainsWritesAndPausesHeartbeat() throws {
     let harness = try LifecycleHarness()
 

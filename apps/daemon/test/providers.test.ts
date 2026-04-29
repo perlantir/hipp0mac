@@ -13,6 +13,7 @@ import { MemoryCredentialStore } from "../src/providers/credentialStore.js";
 import { defaultProviderConfig, findProviderTemplate } from "../src/providers/catalog.js";
 import { ProviderConnectionTester } from "../src/providers/providerConnectionTester.js";
 import { MockModelProviderAdapter, ModelRouter } from "../src/providers/modelRouter.js";
+import { authHeaders, authStore } from "./harness.js";
 
 const tempRoots = new Set<string>();
 
@@ -50,12 +51,14 @@ describe("provider schemas and routes", () => {
       credentialStore: new MemoryCredentialStore({
         openai: "sk-test-secret"
       }),
+      authTokenStore: authStore(),
       logger: false
     });
 
     const response = await app.inject({
       method: "GET",
-      url: "/v1/providers"
+      url: "/v1/providers",
+      headers: authHeaders()
     });
 
     await app.close();
@@ -71,12 +74,14 @@ describe("provider schemas and routes", () => {
     const app = await buildApp({
       config: testConfig(),
       credentialStore: new MemoryCredentialStore({}),
+      authTokenStore: authStore(),
       logger: false
     });
 
     const response = await app.inject({
       method: "PUT",
       url: "/v1/providers/ollama",
+      headers: authHeaders(),
       payload: {
         enabled: true,
         endpoint: "http://127.0.0.1:11434",
@@ -152,4 +157,3 @@ describe("model router", () => {
     expect(response.message.content).toContain("Mock openai response");
   });
 });
-

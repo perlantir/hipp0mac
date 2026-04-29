@@ -39,6 +39,27 @@ public final class RecordingMigrationAuditSink: MigrationAuditSink, @unchecked S
   }
 }
 
+public struct EventStoreMigrationAuditSink: MigrationAuditSink {
+  private let eventStore: EventStore
+
+  public init(eventStore: EventStore) {
+    self.eventStore = eventStore
+  }
+
+  public func migrationApplied(_ event: MigrationAuditEvent) throws {
+    try eventStore.append(
+      taskId: event.taskId ?? PlatformEvent.taskId,
+      eventType: "schema_migration_applied",
+      payload: [
+        "recordKind": .string(event.recordKind),
+        "recordId": .string(event.recordId),
+        "fromVersion": .number(Double(event.fromVersion)),
+        "toVersion": .number(Double(event.toVersion))
+      ]
+    )
+  }
+}
+
 public struct SchemaMigrationEngine: Sendable {
   public static let currentVersion = 1
 

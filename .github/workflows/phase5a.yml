@@ -1,0 +1,44 @@
+name: Phase 5A
+
+on:
+  push:
+    branches:
+      - main
+      - phase-5a/**
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  phase5a:
+    name: Phase 5A test suite
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test monorepo
+        run: npm test
+
+      - name: Helper coverage
+        run: |
+          swift test --package-path apps/helper --enable-code-coverage
+          xcrun llvm-cov report \
+            apps/helper/.build/debug/OperatorDockHelperPackageTests.xctest/Contents/MacOS/OperatorDockHelperPackageTests \
+            -instr-profile apps/helper/.build/debug/codecov/default.profdata \
+            -ignore-filename-regex='Tests|main.swift' \
+            > docs/phase-5a/coverage-report.txt
+

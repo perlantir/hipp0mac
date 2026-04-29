@@ -25,11 +25,14 @@ public enum PersistenceSecurityError: Error, Equatable, LocalizedError {
 
 public enum PersistencePlatformError: Error, Equatable, LocalizedError {
   case applicationSupportUnavailable
+  case migrationFailed(String)
 
   public var errorDescription: String? {
     switch self {
     case .applicationSupportUnavailable:
       "Unable to locate Application Support directory."
+    case .migrationFailed(let reason):
+      "Unable to migrate Operator Dock persistence state: \(reason)"
     }
   }
 }
