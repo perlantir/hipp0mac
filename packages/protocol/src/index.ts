@@ -470,6 +470,27 @@ export const ApprovalDecisionInputSchema = z.object({
   approved: z.boolean()
 });
 
+export const ToolApprovalStatusSchema = z.enum(["pending", "approved", "rejected"]);
+
+export const ToolApprovalSchema = z.object({
+  id: idSchema,
+  executionId: idSchema,
+  toolName: z.string().min(1),
+  riskLevel: ToolRiskLevelSchema,
+  reason: z.string(),
+  status: ToolApprovalStatusSchema,
+  createdAt: isoDateTimeSchema,
+  resolvedAt: isoDateTimeSchema.optional()
+});
+
+export const ToolApprovalListResponseSchema = z.object({
+  approvals: z.array(ToolApprovalSchema)
+});
+
+export const ToolApprovalResolveInputSchema = z.object({
+  approved: z.boolean()
+});
+
 export const ShellRunInputSchema = z.object({
   command: z.string().trim().min(1),
   cwd: z.string().trim().min(1).optional(),
@@ -482,6 +503,10 @@ export const ShellRunOutputSchema = z.object({
   exitCode: z.number().int().nullable(),
   stdout: z.string(),
   stderr: z.string()
+});
+
+export const ShellRunInteractiveInputSchema = ShellRunInputSchema.extend({
+  stdin: z.string().default("")
 });
 
 const EventBaseSchema = z.object({
@@ -627,5 +652,7 @@ export type ToolError = z.infer<typeof ToolErrorSchema>;
 export type ToolEventRecord = z.infer<typeof ToolEventRecordSchema>;
 export type ToolResult = z.infer<typeof ToolResultSchema>;
 export type ToolExecutionRequest = z.infer<typeof ToolExecutionRequestSchema>;
+export type ToolApproval = z.infer<typeof ToolApprovalSchema>;
 export type ShellRunInput = z.infer<typeof ShellRunInputSchema>;
 export type ShellRunOutput = z.infer<typeof ShellRunOutputSchema>;
+export type ShellRunInteractiveInput = z.infer<typeof ShellRunInteractiveInputSchema>;

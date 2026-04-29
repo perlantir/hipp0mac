@@ -298,6 +298,89 @@ public struct FileListResponse: Decodable, Sendable {
   public let entries: [FileEntry]
 }
 
+public enum ToolRiskLevel: String, Codable, Sendable {
+  case safe
+  case medium
+  case dangerous
+
+  public var displayName: String {
+    switch self {
+    case .safe: "Safe"
+    case .medium: "Medium"
+    case .dangerous: "Dangerous"
+    }
+  }
+}
+
+public enum ToolApprovalStatus: String, Codable, Sendable {
+  case pending
+  case approved
+  case rejected
+}
+
+public struct ToolApproval: Identifiable, Codable, Hashable, Sendable {
+  public let id: String
+  public let executionId: String
+  public let toolName: String
+  public let riskLevel: ToolRiskLevel
+  public let reason: String
+  public let status: ToolApprovalStatus
+  public let createdAt: String
+  public let resolvedAt: String?
+}
+
+public struct ToolApprovalListResponse: Decodable, Sendable {
+  public let approvals: [ToolApproval]
+}
+
+public struct ToolApprovalResolveRequest: Encodable, Sendable {
+  public let approved: Bool
+
+  public init(approved: Bool) {
+    self.approved = approved
+  }
+}
+
+public struct ToolExecutionError: Codable, Hashable, Sendable {
+  public let code: String
+  public let message: String
+  public let details: [String: JSONValue]?
+}
+
+public struct ToolReplayMetadata: Codable, Hashable, Sendable {
+  public let inputHash: String
+  public let workspaceRoot: String?
+  public let startedAt: String
+  public let completedAt: String?
+  public let attempts: Int
+}
+
+public struct ToolEventRecord: Identifiable, Codable, Hashable, Sendable {
+  public let id: String
+  public let executionId: String
+  public let toolName: String
+  public let type: String
+  public let createdAt: String
+  public let payload: [String: JSONValue]
+}
+
+public struct ToolExecutionResult: Codable, Hashable, Sendable {
+  public let executionId: String
+  public let toolName: String
+  public let status: String
+  public let riskLevel: ToolRiskLevel
+  public let ok: Bool
+  public let output: JSONValue?
+  public let error: ToolExecutionError?
+  public let rawOutputRef: String?
+  public let events: [ToolEventRecord]
+  public let replay: ToolReplayMetadata
+}
+
+public struct ToolExecutionResponse: Decodable, Sendable {
+  public let result: ToolExecutionResult
+}
+
 public enum OperatorEvent: Identifiable, Decodable, Sendable {
   case taskCreated(TaskEventEnvelope)
   case taskUpdated(TaskEventEnvelope)

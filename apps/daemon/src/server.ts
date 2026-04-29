@@ -17,9 +17,14 @@ import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/
 import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
 import { registerProviderRoutes } from "./providers/routes.js";
 import { TaskRepository } from "./tasks/taskRepository.js";
+import { fsToolDefinitions } from "./tools/fs/fsToolDefinitions.js";
 import { FileOperationLogger } from "./tools/fs/fileOperationLogger.js";
 import { FsToolService } from "./tools/fs/fsToolService.js";
+import { shellRunInteractiveTool, shellRunTool } from "./tools/shell/shellTools.js";
+import { ToolApprovalStore } from "./tools/runtime/toolApprovalStore.js";
 import { ToolEventStore } from "./tools/runtime/toolEventStore.js";
+import { ToolRuntime } from "./tools/runtime/toolRuntime.js";
+import { registerToolRuntimeRoutes } from "./tools/runtime/routes.js";
 import { EventBus, registerEventRoutes } from "./websocket/eventBus.js";
 import { registerWorkspaceRoutes } from "./workspace/routes.js";
 import { WorkspaceSettingsRepository } from "./workspace/workspaceSettingsRepository.js";
@@ -51,6 +56,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const toolEvents = new ToolEventStore(database, eventBus);
   const fileLogger = new FileOperationLogger(database);
   const fsTools = new FsToolService(workspace, toolEvents, fileLogger);
+  const toolApprovals = new ToolApprovalStore(database);
+  const toolRuntime = new ToolRuntime({
+    workspace,
+    events: toolEvents,
+    approvals: toolApprovals
+  });
+  for (const tool of fsToolDefinitions(fsTools)) {
+    toolRuntime.register(tool);
+  }
+  toolRuntime.register(shellRunTool());
+  toolRuntime.register(shellRunInteractiveTool());
   const app = Fastify({
     logger: options.logger ?? true
   });
@@ -144,7 +160,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
   await registerWorkspaceRoutes(app, {
     workspace,
-    fsTools
+    runtime: toolRuntime
+  });
+  await registerToolRuntimeRoutes(app, {
+    runtime: toolRuntime,
+    approvals: toolApprovals
   });
 
   return app;

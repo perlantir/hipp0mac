@@ -27,7 +27,7 @@ struct WorkspaceScreen: View {
         bottomComposer
       }
 
-      if showApproval {
+      if showApproval, let approval = store.pendingApprovals.first {
         Color.black.opacity(0.42)
           .ignoresSafeArea()
           .onTapGesture {
@@ -35,14 +35,33 @@ struct WorkspaceScreen: View {
           }
 
         ApprovalModal(
-          title: "Send 14 emails to design partners",
-          details: "Operator Dock wants to send partner emails using the generated launch announcement. Review the scope before continuing.",
-          onApprove: { showApproval = false },
-          onDecline: { showApproval = false }
+          title: approval.toolName,
+          details: approval.reason,
+          scopes: approvalScopes(for: approval),
+          onApprove: {
+            showApproval = false
+            Task {
+              await store.resolveToolApproval(approval, approved: true)
+            }
+          },
+          onDecline: {
+            showApproval = false
+            Task {
+              await store.resolveToolApproval(approval, approved: false)
+            }
+          }
         )
       }
     }
     .background(ODTheme.ColorToken.canvas)
+  }
+
+  private func approvalScopes(for approval: ToolApproval) -> [ApprovalScope] {
+    [
+      ApprovalScope(icon: "terminal", title: "Tool", detail: approval.toolName),
+      ApprovalScope(icon: "exclamationmark.shield", title: "Risk", detail: approval.riskLevel.displayName),
+      ApprovalScope(icon: "number", title: "Execution", detail: String(approval.executionId.prefix(8)))
+    ]
   }
 
   private var workspaceStatusBar: some View {
@@ -61,14 +80,16 @@ struct WorkspaceScreen: View {
 
       Spacer()
 
-        WorkspaceMetric(label: "Boundary", value: "On")
-        WorkspaceMetric(label: "Logs", value: "Raw")
-        WorkspaceMetric(label: "Events", value: "Live")
+      WorkspaceMetric(label: "Boundary", value: "On")
+      WorkspaceMetric(label: "Logs", value: "Raw")
+      WorkspaceMetric(label: "Events", value: "Live")
 
       Button {
-        showApproval = true
+        if !store.pendingApprovals.isEmpty {
+          showApproval = true
+        }
       } label: {
-        Label("2 pending", systemImage: "checkmark.shield")
+        Label("\(store.pendingApprovals.count) pending", systemImage: "checkmark.shield")
           .font(.odText(11.5, weight: .medium))
           .foregroundStyle(ODTheme.ColorToken.waiting)
           .frame(height: 24)
@@ -77,6 +98,7 @@ struct WorkspaceScreen: View {
           .clipShape(Capsule())
       }
       .buttonStyle(.plain)
+      .disabled(store.pendingApprovals.isEmpty)
 
       PillButton(title: "", systemImage: "pause", style: .secondary) {}
       PillButton(title: "", systemImage: "stop.fill", style: .secondary) {}
@@ -122,22 +144,33 @@ struct WorkspaceScreen: View {
           ToolCallCard(tool: tool)
         }
 
-        SectionLabel(title: "Approvals", count: "2")
-        Button {
-          showApproval = true
-        } label: {
+        SectionLabel(title: "Approvals", count: "\(store.pendingApprovals.count)")
+        if let approval = store.pendingApprovals.first {
+          Button {
+            showApproval = true
+          } label: {
+            HStack {
+              Label(approval.toolName, systemImage: "checkmark.shield")
+                .font(.odText(12.5, weight: .medium))
+              Spacer()
+              Text(approval.riskLevel.displayName)
+                .font(.odText(11.5, weight: .medium))
+            }
+            .foregroundStyle(ODTheme.ColorToken.waiting)
+            .padding(14)
+            .odCard(fill: ODTheme.ColorToken.waiting.opacity(0.09))
+          }
+          .buttonStyle(.plain)
+        } else {
           HStack {
-            Label("Review Gmail send", systemImage: "checkmark.shield")
+            Label("No pending approvals", systemImage: "checkmark.shield")
               .font(.odText(12.5, weight: .medium))
             Spacer()
-            Text("Review")
-              .font(.odText(11.5, weight: .medium))
           }
-          .foregroundStyle(ODTheme.ColorToken.waiting)
+          .foregroundStyle(ODTheme.ColorToken.textTertiary)
           .padding(14)
-          .odCard(fill: ODTheme.ColorToken.waiting.opacity(0.09))
+          .odCard(fill: ODTheme.ColorToken.surface)
         }
-        .buttonStyle(.plain)
 
         SectionLabel(title: "Memory used")
         VStack(spacing: 0) {

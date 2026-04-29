@@ -7,13 +7,13 @@ import {
   WorkspaceResponseSchema
 } from "@operator-dock/protocol";
 import { ApiError } from "../errors.js";
-import type { FsToolService } from "../tools/fs/fsToolService.js";
+import type { ToolRuntime } from "../tools/runtime/toolRuntime.js";
 import type { WorkspaceService } from "./workspaceService.js";
 import { WorkspacePathSafety } from "./pathSafety.js";
 
 export interface WorkspaceRouteDependencies {
   workspace: WorkspaceService;
-  fsTools: FsToolService;
+  runtime: ToolRuntime;
 }
 
 export async function registerWorkspaceRoutes(
@@ -48,10 +48,13 @@ export async function registerWorkspaceRoutes(
 
   app.get("/v1/workspace/files", async (request) => {
     const query = request.query as { path?: string; recursive?: string; maxEntries?: string };
-    const result = await dependencies.fsTools.list({
-      path: query.path ?? ".",
-      recursive: query.recursive === "true",
-      maxEntries: query.maxEntries === undefined ? 200 : Number(query.maxEntries)
+    const result = await dependencies.runtime.execute({
+      toolName: "fs.list",
+      input: {
+        path: query.path ?? ".",
+        recursive: query.recursive === "true",
+        maxEntries: query.maxEntries === undefined ? 200 : Number(query.maxEntries)
+      }
     });
 
     if (!result.ok) {
@@ -63,50 +66,73 @@ export async function registerWorkspaceRoutes(
 
   app.post("/v1/tools/fs/read", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.read(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.read",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/write", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.write(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.write",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/append", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.append(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.append",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/list", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.list(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.list",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/search", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.search(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.search",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/copy", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.copy(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.copy",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/move", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.move(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.move",
+        input: request.body
+      })
     });
   });
 
   app.post("/v1/tools/fs/delete", async (request) => {
     return ToolExecutionResponseSchema.parse({
-      result: await dependencies.fsTools.delete(request.body)
+      result: await dependencies.runtime.execute({
+        toolName: "fs.delete",
+        input: request.body
+      })
     });
   });
 }
-

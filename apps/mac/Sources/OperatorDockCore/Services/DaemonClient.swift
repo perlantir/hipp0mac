@@ -110,6 +110,19 @@ public struct DaemonClient: Sendable {
     return response.entries
   }
 
+  public func listToolApprovals() async throws -> [ToolApproval] {
+    let response: ToolApprovalListResponse = try await get("/v1/tools/approvals")
+    return response.approvals
+  }
+
+  public func resolveToolApproval(id: String, approved: Bool) async throws -> ToolExecutionResult {
+    let response: ToolExecutionResponse = try await post(
+      "/v1/tools/approvals/\(id)/resolve",
+      body: ToolApprovalResolveRequest(approved: approved)
+    )
+    return response.result
+  }
+
   public func events() -> AsyncThrowingStream<OperatorEvent, Error> {
     AsyncThrowingStream { continuation in
       let task = session.webSocketTask(with: webSocketURL)

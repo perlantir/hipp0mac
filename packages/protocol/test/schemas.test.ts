@@ -6,7 +6,10 @@ import {
   OperatorEventSchema,
   TaskCreateInputSchema,
   TaskSchema,
-  ToolCallSchema
+  ToolApprovalSchema,
+  ToolCallSchema,
+  ToolExecutionRequestSchema,
+  ToolResultSchema
 } from "../src/index.js";
 
 const task = {
@@ -131,5 +134,50 @@ describe("protocol schemas", () => {
 
     expect(parsed.stream).toBe(false);
     expect(parsed.tools).toEqual([]);
+  });
+
+  it("validates tool runtime requests, approvals, and replay metadata", () => {
+    const request = ToolExecutionRequestSchema.parse({
+      toolName: "fs.write",
+      input: {
+        path: "tasks/demo.md",
+        content: "hello"
+      }
+    });
+
+    expect(request.retry).toBe(0);
+
+    const approval = ToolApprovalSchema.parse({
+      id: "a1a5290c-121f-4e8c-bb1a-f4fd0504e4e5",
+      executionId: "7c199b54-ac58-4f9c-acdc-a79d767ed776",
+      toolName: "shell.run",
+      riskLevel: "dangerous",
+      reason: "Commands using sudo require approval.",
+      status: "pending",
+      createdAt: "2026-04-29T13:04:00.000Z"
+    });
+
+    const result = ToolResultSchema.parse({
+      executionId: approval.executionId,
+      toolName: "shell.run",
+      status: "waiting_for_approval",
+      riskLevel: "dangerous",
+      ok: false,
+      error: {
+        code: "TOOL_APPROVAL_REQUIRED",
+        message: approval.reason,
+        details: {
+          approvalId: approval.id
+        }
+      },
+      events: [],
+      replay: {
+        inputHash: "0".repeat(64),
+        startedAt: "2026-04-29T13:04:00.000Z",
+        attempts: 1
+      }
+    });
+
+    expect(result.error?.details?.approvalId).toBe(approval.id);
   });
 });

@@ -63,6 +63,10 @@ Useful endpoints:
 - `POST /v1/workspace/projects`
 - `GET /v1/workspace/files`
 - `POST /v1/tools/fs/:operation`
+- `POST /v1/tools/execute`
+- `POST /v1/tools/executions/:executionId/cancel`
+- `GET /v1/tools/approvals`
+- `POST /v1/tools/approvals/:approvalId/resolve`
 
 Example task creation:
 
@@ -89,3 +93,7 @@ This runs TypeScript package tests and SwiftPM tests for the macOS app core netw
 ## Provider Security
 
 The Mac app stores hosted provider API keys in macOS Keychain using service `com.perlantir.operatordock.providers`. The daemon reads credentials from the same local Keychain service when it needs to test or use a provider. Provider settings stored in SQLite contain only non-secret configuration such as enabled state, endpoint, default model, and role defaults.
+
+## Tool Runtime Safety
+
+All tool calls now flow through a typed runtime with zod input/output validation, deterministic error codes, persisted events, replay metadata, timeout/cancellation support, approval hooks, and secret redaction. File tools are registered as runtime tools, and `shell.run` / `shell.runInteractive` are guarded by command classification for sudo, broad deletes, curl-pipe-shell, destructive denylisted commands, and outside-workspace mutations.

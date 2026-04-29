@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   ToolEventRecordSchema,
+  ToolResultSchema,
   type JsonValue,
   type OperatorEvent,
   type ToolEventRecord,
@@ -17,6 +18,27 @@ export interface CreateExecutionInput {
   input: Record<string, JsonValue>;
   riskLevel: ToolRiskLevel;
   workspaceRoot?: string;
+}
+
+interface ToolExecutionRow {
+  id: string;
+  tool_name: string;
+  status: ToolExecutionStatus;
+  risk_level: ToolRiskLevel;
+  output_json: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  raw_output_ref: string | null;
+  replay_json: string;
+}
+
+interface ToolEventRow {
+  id: string;
+  execution_id: string;
+  tool_name: string;
+  event_type: ToolEventType;
+  payload_json: string;
+  created_at: string;
 }
 
 export class ToolEventStore {
@@ -68,6 +90,65 @@ export class ToolEventStore {
       events: [],
       replay
     };
+  }
+
+  getExecution(executionId: string): ToolResult | undefined {
+    const row = this.database
+      .prepare(`
+        SELECT
+          id,
+          tool_name,
+          status,
+          risk_level,
+          output_json,
+          error_code,
+          error_message,
+          raw_output_ref,
+          replay_json
+        FROM tool_executions
+        WHERE id = ?
+      `)
+      .get(executionId) as ToolExecutionRow | undefined;
+
+    if (row === undefined) {
+      return undefined;
+    }
+
+    const events = this.database
+      .prepare(`
+        SELECT id, execution_id, tool_name, event_type, payload_json, created_at
+        FROM tool_events
+        WHERE execution_id = ?
+        ORDER BY created_at ASC
+      `)
+      .all(executionId) as unknown as ToolEventRow[];
+
+    return ToolResultSchema.parse({
+      executionId: row.id,
+      toolName: row.tool_name,
+      status: row.status,
+      riskLevel: row.risk_level,
+      ok: row.status === "completed",
+      ...(row.output_json === null ? {} : { output: JSON.parse(row.output_json) as JsonValue }),
+      ...(row.error_code === null || row.error_message === null
+        ? {}
+        : {
+          error: {
+            code: row.error_code,
+            message: row.error_message
+          }
+        }),
+      ...(row.raw_output_ref === null ? {} : { rawOutputRef: row.raw_output_ref }),
+      events: events.map((event) => ToolEventRecordSchema.parse({
+        id: event.id,
+        executionId: event.execution_id,
+        toolName: event.tool_name,
+        type: event.event_type,
+        createdAt: event.created_at,
+        payload: JSON.parse(event.payload_json) as Record<string, JsonValue>
+      })),
+      replay: JSON.parse(row.replay_json) as JsonValue
+    });
   }
 
   recordEvent(
@@ -125,13 +206,20 @@ export class ToolEventStore {
     output: JsonValue | undefined,
     errorCode?: string,
     errorMessage?: string,
-    rawOutputRef?: string
+    rawOutputRef?: string,
+    errorDetails?: Record<string, JsonValue>
   ): ToolResult {
     const now = new Date().toISOString();
-    const replay = {
-      ...result.replay,
-      completedAt: now
-    };
+    const terminal = status === "completed"
+      || status === "failed"
+      || status === "cancelled"
+      || status === "timed_out";
+    const replay = terminal
+      ? {
+        ...result.replay,
+        completedAt: now
+      }
+      : result.replay;
 
     this.database
       .prepare(`
@@ -157,18 +245,76 @@ export class ToolEventStore {
         result.executionId
       );
 
-    return {
+    const updated: ToolResult = {
       ...result,
       status,
       ok: status === "completed",
-      output,
-      error: errorCode === undefined || errorMessage === undefined
-        ? undefined
-        : {
-          code: errorCode,
-          message: errorMessage
-        },
-      rawOutputRef,
+      replay
+    };
+
+    if (output !== undefined) {
+      updated.output = output;
+    } else {
+      delete updated.output;
+    }
+
+    if (rawOutputRef !== undefined) {
+      updated.rawOutputRef = rawOutputRef;
+    } else {
+      delete updated.rawOutputRef;
+    }
+
+    if (errorCode !== undefined && errorMessage !== undefined) {
+      updated.error = {
+        code: errorCode,
+        message: errorMessage,
+        ...(errorDetails === undefined ? {} : { details: errorDetails })
+      };
+    } else {
+      delete updated.error;
+    }
+
+    return updated;
+  }
+
+  markRunning(result: ToolResult): ToolResult {
+    const now = new Date().toISOString();
+    this.database
+      .prepare(`
+        UPDATE tool_executions
+        SET
+          status = 'running',
+          output_json = NULL,
+          error_code = NULL,
+          error_message = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(now, result.executionId);
+
+    const updated: ToolResult = {
+      ...result,
+      status: "running",
+      ok: false
+    };
+
+    delete updated.output;
+    delete updated.error;
+    return updated;
+  }
+
+  updateAttempts(result: ToolResult, attempts: number): ToolResult {
+    const replay = {
+      ...result.replay,
+      attempts
+    };
+
+    this.database
+      .prepare("UPDATE tool_executions SET replay_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(replay), new Date().toISOString(), result.executionId);
+
+    return {
+      ...result,
       replay
     };
   }
@@ -177,4 +323,3 @@ export class ToolEventStore {
 function hashJson(value: Record<string, JsonValue>): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
-

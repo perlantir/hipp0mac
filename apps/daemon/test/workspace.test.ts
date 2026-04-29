@@ -161,7 +161,7 @@ describe("file tools", () => {
 
     const result = ToolExecutionResponseSchema.parse(response.json()).result;
     expect(result.status).toBe("failed");
-    expect(result.error?.code).toBe("PATH_BLOCKED");
+    expect(result.error?.code).toBe("TOOL_DENIED");
   });
 
   it("requires approval for outside-workspace writes", async () => {
@@ -181,7 +181,7 @@ describe("file tools", () => {
 
     const result = ToolExecutionResponseSchema.parse(response.json()).result;
     expect(result.status).toBe("waiting_for_approval");
-    expect(result.error?.code).toBe("APPROVAL_REQUIRED");
+    expect(result.error?.code).toBe("TOOL_APPROVAL_REQUIRED");
     expect(existsSync(outsidePath)).toBe(false);
   });
 
@@ -228,4 +228,3 @@ describe("file tools", () => {
     expect(readFileSync(outsidePath, "utf8")).toBe("approved");
   });
 });
-

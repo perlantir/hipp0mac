@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -13,7 +14,15 @@ import {
   FileSearchInputSchema,
   FileSearchOutputSchema,
   FileWriteInputSchema,
+  type FileAppendInput,
+  type FileCopyInput,
+  type FileDeleteInput,
   type FileEntry,
+  type FileListInput,
+  type FileMoveInput,
+  type FileReadInput,
+  type FileSearchInput,
+  type FileWriteInput,
   type JsonValue,
   type ToolResult,
   type ToolRiskLevel
@@ -25,6 +34,22 @@ import { FileOperationLogger } from "./fileOperationLogger.js";
 
 type FsOperation = "read" | "write" | "append" | "list" | "search" | "copy" | "move" | "delete";
 
+export interface FsToolExecutionContext {
+  executionId: string;
+  approvalToken?: string;
+}
+
+export class FsToolSafetyError extends Error {
+  constructor(
+    readonly code: "APPROVAL_REQUIRED" | "PATH_BLOCKED",
+    message: string,
+    readonly approvalRequired: boolean
+  ) {
+    super(message);
+    this.name = "FsToolSafetyError";
+  }
+}
+
 export class FsToolService {
   constructor(
     private readonly workspaceService: WorkspaceService,
@@ -34,176 +59,197 @@ export class FsToolService {
 
   async read(rawInput: unknown): Promise<ToolResult> {
     const input = FileReadInputSchema.parse(rawInput);
-    return this.run("fs.read", "safe", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkRead(input.path);
-      this.log("read", executionId, safety);
-
-      const fileStat = await stat(safety.absolutePath);
-      const maxBytes = Math.min(input.maxBytes, Number(fileStat.size));
-      const content = await readFile(safety.absolutePath, {
-        encoding: input.encoding
-      });
-      const sliced = content.slice(0, maxBytes);
-
-      return FileReadOutputSchema.parse({
-        path: safety.absolutePath,
-        relativePath: safety.relativePath,
-        content: sliced,
-        bytesRead: Buffer.byteLength(sliced, input.encoding)
-      });
-    });
+    return this.run("fs.read", "safe", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.readOutput(input, { executionId }))
+    );
   }
 
   async write(rawInput: unknown): Promise<ToolResult> {
     const input = FileWriteInputSchema.parse(rawInput);
-    return this.run("fs.write", "medium", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkWrite(input.path, input.approvalToken);
-      this.log("write", executionId, safety);
-      if (!safety.allowed) {
-        return safetyFailure(safety);
-      }
-
-      if (input.createDirs) {
-        await mkdir(dirname(safety.absolutePath), { recursive: true });
-      }
-      await writeFile(safety.absolutePath, input.content, {
-        encoding: "utf8",
-        flag: input.overwrite ? "w" : "wx"
-      });
-
-      return {
-        path: safety.absolutePath,
-        relativePath: safety.relativePath,
-        bytesWritten: Buffer.byteLength(input.content, "utf8")
-      };
-    });
+    return this.run("fs.write", "medium", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.writeOutput(input, { executionId }))
+    );
   }
 
   async append(rawInput: unknown): Promise<ToolResult> {
     const input = FileAppendInputSchema.parse(rawInput);
-    return this.run("fs.append", "medium", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkWrite(input.path, input.approvalToken);
-      this.log("append", executionId, safety);
-      if (!safety.allowed) {
-        return safetyFailure(safety);
-      }
-
-      if (input.createDirs) {
-        await mkdir(dirname(safety.absolutePath), { recursive: true });
-      }
-      await appendFile(safety.absolutePath, input.content, "utf8");
-
-      return {
-        path: safety.absolutePath,
-        relativePath: safety.relativePath,
-        bytesWritten: Buffer.byteLength(input.content, "utf8")
-      };
-    });
+    return this.run("fs.append", "medium", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.appendOutput(input, { executionId }))
+    );
   }
 
   async list(rawInput: unknown): Promise<ToolResult> {
     const input = FileListInputSchema.parse(rawInput);
-    return this.run("fs.list", "safe", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkRead(input.path);
-      this.log("list", executionId, safety);
-
-      const entries = await this.listEntries(safety.absolutePath, input.recursive, input.maxEntries);
-      return {
-        entries: entries.map(fileEntryToJson)
-      };
-    });
+    return this.run("fs.list", "safe", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.listOutput(input, { executionId }))
+    );
   }
 
   async search(rawInput: unknown): Promise<ToolResult> {
     const input = FileSearchInputSchema.parse(rawInput);
-    return this.run("fs.search", "safe", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkRead(input.path);
-      this.log("search", executionId, safety);
-
-      const entries = await this.listEntries(safety.absolutePath, true, input.maxResults * 10);
-      const files = entries.filter((entry) => entry.kind === "file").slice(0, input.maxResults * 10);
-      const matches = [];
-
-      for (const file of files) {
-        if (matches.length >= input.maxResults) {
-          break;
-        }
-
-        const fileMatches = await findInFile(file.path, file.relativePath, input.query, input.maxResults - matches.length);
-        matches.push(...fileMatches);
-      }
-
-      return FileSearchOutputSchema.parse({ matches });
-    });
+    return this.run("fs.search", "safe", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.searchOutput(input, { executionId }))
+    );
   }
 
   async copy(rawInput: unknown): Promise<ToolResult> {
     const input = FileCopyInputSchema.parse(rawInput);
-    return this.run("fs.copy", "medium", input as Record<string, JsonValue>, async (executionId) => {
-      const from = this.safety().checkRead(input.from);
-      const to = this.safety().checkWrite(input.to, input.approvalToken);
-      this.log("copy", executionId, to, from.absolutePath);
-      if (!to.allowed) {
-        return safetyFailure(to);
-      }
-
-      await mkdir(dirname(to.absolutePath), { recursive: true });
-      await copyFile(from.absolutePath, to.absolutePath, input.overwrite ? 0 : 1);
-      return {
-        path: to.absolutePath,
-        relativePath: to.relativePath
-      };
-    });
+    return this.run("fs.copy", "medium", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.copyOutput(input, { executionId }))
+    );
   }
 
   async move(rawInput: unknown): Promise<ToolResult> {
     const input = FileMoveInputSchema.parse(rawInput);
-    return this.run("fs.move", "medium", input as Record<string, JsonValue>, async (executionId) => {
-      const from = this.safety().checkWrite(input.from, input.approvalToken);
-      const to = this.safety().checkWrite(input.to, input.approvalToken);
-      this.log("move", executionId, to, from.absolutePath);
-      if (!from.allowed) {
-        return safetyFailure(from);
-      }
-      if (!to.allowed) {
-        return safetyFailure(to);
-      }
-
-      await mkdir(dirname(to.absolutePath), { recursive: true });
-      if (!input.overwrite) {
-        await stat(to.absolutePath).then(
-          () => {
-            throw new Error("Destination already exists.");
-          },
-          () => undefined
-        );
-      }
-      await rename(from.absolutePath, to.absolutePath);
-      return {
-        path: to.absolutePath,
-        relativePath: to.relativePath
-      };
-    });
+    return this.run("fs.move", "medium", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.moveOutput(input, { executionId }))
+    );
   }
 
   async delete(rawInput: unknown): Promise<ToolResult> {
     const input = FileDeleteInputSchema.parse(rawInput);
-    return this.run("fs.delete", "dangerous", input as Record<string, JsonValue>, async (executionId) => {
-      const safety = this.safety().checkDelete(input.path, input.approvalToken);
-      this.log("delete", executionId, safety);
-      if (!safety.allowed) {
-        return safetyFailure(safety);
+    return this.run("fs.delete", "dangerous", input as Record<string, JsonValue>, (executionId) =>
+      this.captureSafety(() => this.deleteOutput(input, { executionId }))
+    );
+  }
+
+  async readOutput(input: FileReadInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkRead(input.path);
+    this.log("read", context.executionId, safety);
+
+    const fileStat = await stat(safety.absolutePath);
+    const maxBytes = Math.min(input.maxBytes, Number(fileStat.size));
+    const content = await readFile(safety.absolutePath, {
+      encoding: input.encoding
+    });
+    const sliced = content.slice(0, maxBytes);
+
+    return FileReadOutputSchema.parse({
+      path: safety.absolutePath,
+      relativePath: safety.relativePath,
+      content: sliced,
+      bytesRead: Buffer.byteLength(sliced, input.encoding)
+    });
+  }
+
+  async writeOutput(input: FileWriteInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkWrite(input.path, context.approvalToken ?? input.approvalToken);
+    this.log("write", context.executionId, safety);
+    assertSafe(safety);
+
+    if (input.createDirs) {
+      await mkdir(dirname(safety.absolutePath), { recursive: true });
+    }
+    await writeFile(safety.absolutePath, input.content, {
+      encoding: "utf8",
+      flag: input.overwrite ? "w" : "wx"
+    });
+
+    return {
+      path: safety.absolutePath,
+      relativePath: safety.relativePath,
+      bytesWritten: Buffer.byteLength(input.content, "utf8")
+    };
+  }
+
+  async appendOutput(input: FileAppendInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkWrite(input.path, context.approvalToken ?? input.approvalToken);
+    this.log("append", context.executionId, safety);
+    assertSafe(safety);
+
+    if (input.createDirs) {
+      await mkdir(dirname(safety.absolutePath), { recursive: true });
+    }
+    await appendFile(safety.absolutePath, input.content, "utf8");
+
+    return {
+      path: safety.absolutePath,
+      relativePath: safety.relativePath,
+      bytesWritten: Buffer.byteLength(input.content, "utf8")
+    };
+  }
+
+  async listOutput(input: FileListInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkRead(input.path);
+    this.log("list", context.executionId, safety);
+
+    const entries = await this.listEntries(safety.absolutePath, input.recursive, input.maxEntries);
+    return {
+      entries: entries.map(fileEntryToJson)
+    };
+  }
+
+  async searchOutput(input: FileSearchInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkRead(input.path);
+    this.log("search", context.executionId, safety);
+
+    const entries = await this.listEntries(safety.absolutePath, true, input.maxResults * 10);
+    const files = entries.filter((entry) => entry.kind === "file").slice(0, input.maxResults * 10);
+    const matches = [];
+
+    for (const file of files) {
+      if (matches.length >= input.maxResults) {
+        break;
       }
 
-      await rm(safety.absolutePath, {
-        recursive: input.recursive,
-        force: false
-      });
-      return {
-        path: safety.absolutePath,
-        relativePath: safety.relativePath
-      };
+      const fileMatches = await findInFile(file.path, file.relativePath, input.query, input.maxResults - matches.length);
+      matches.push(...fileMatches);
+    }
+
+    return FileSearchOutputSchema.parse({ matches });
+  }
+
+  async copyOutput(input: FileCopyInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const from = this.safety().checkRead(input.from);
+    const to = this.safety().checkWrite(input.to, context.approvalToken ?? input.approvalToken);
+    this.log("copy", context.executionId, to, from.absolutePath);
+    assertSafe(to);
+
+    await mkdir(dirname(to.absolutePath), { recursive: true });
+    await copyFile(from.absolutePath, to.absolutePath, input.overwrite ? 0 : constants.COPYFILE_EXCL);
+    return {
+      path: to.absolutePath,
+      relativePath: to.relativePath
+    };
+  }
+
+  async moveOutput(input: FileMoveInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const approvalToken = context.approvalToken ?? input.approvalToken;
+    const from = this.safety().checkWrite(input.from, approvalToken);
+    const to = this.safety().checkWrite(input.to, approvalToken);
+    this.log("move", context.executionId, to, from.absolutePath);
+    assertSafe(from);
+    assertSafe(to);
+
+    await mkdir(dirname(to.absolutePath), { recursive: true });
+    if (!input.overwrite) {
+      await stat(to.absolutePath).then(
+        () => {
+          throw new Error("Destination already exists.");
+        },
+        () => undefined
+      );
+    }
+    await rename(from.absolutePath, to.absolutePath);
+    return {
+      path: to.absolutePath,
+      relativePath: to.relativePath
+    };
+  }
+
+  async deleteOutput(input: FileDeleteInput, context: FsToolExecutionContext): Promise<JsonValue> {
+    const safety = this.safety().checkDelete(input.path, context.approvalToken ?? input.approvalToken);
+    this.log("delete", context.executionId, safety);
+    assertSafe(safety);
+
+    await rm(safety.absolutePath, {
+      recursive: input.recursive,
+      force: false
     });
+    return {
+      path: safety.absolutePath,
+      relativePath: safety.relativePath
+    };
   }
 
   private async run(
@@ -345,6 +391,22 @@ export class FsToolService {
       ...(decision.reason === undefined ? {} : { reason: decision.reason })
     });
   }
+
+  private async captureSafety(operation: () => Promise<JsonValue>): Promise<JsonValue | SafetyFailure> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof FsToolSafetyError) {
+        return {
+          code: error.code,
+          message: error.message,
+          approvalRequired: error.approvalRequired
+        };
+      }
+
+      throw error;
+    }
+  }
 }
 
 function fileEntryToJson(entry: FileEntry): Record<string, JsonValue> {
@@ -364,12 +426,16 @@ interface SafetyFailure {
   approvalRequired: boolean;
 }
 
-function safetyFailure(decision: SafetyDecision): SafetyFailure {
-  return {
-    code: decision.approvalRequired ? "APPROVAL_REQUIRED" : "PATH_BLOCKED",
-    message: decision.reason ?? "File operation blocked by workspace safety policy.",
-    approvalRequired: decision.approvalRequired
-  };
+function assertSafe(decision: SafetyDecision): void {
+  if (decision.allowed) {
+    return;
+  }
+
+  throw new FsToolSafetyError(
+    decision.approvalRequired ? "APPROVAL_REQUIRED" : "PATH_BLOCKED",
+    decision.reason ?? "File operation blocked by workspace safety policy.",
+    decision.approvalRequired
+  );
 }
 
 function isSafetyFailure(value: JsonValue | SafetyFailure): value is SafetyFailure {

@@ -154,3 +154,33 @@ Tests:
 - Blocked unsafe delete.
 - Approval required outside workspace.
 - Event emission.
+
+## Phase 4 - Enterprise Tool Runtime and Safety Governor
+
+Status: implemented.
+
+Goal: centralize all future agent actions behind a strongly typed, auditable, approval-aware local tool runtime.
+
+Implemented:
+
+- Strict tool definition interface with input/output schema validation.
+- Standard `ToolResult` shape with deterministic error codes.
+- `safe`, `medium`, and `dangerous` risk classification.
+- Timeout, retry, cancellation, raw output refs, and replay metadata.
+- Persisted runtime events and approval records.
+- Approval pause/resume flow with Mac Workspace approval modal wiring.
+- Secret redaction for tool outputs, errors, raw refs, and persisted inputs.
+- File tools registered through the runtime.
+- `shell.run` and `shell.runInteractive` with cancellation and bounded execution.
+- Shell command risk classifier with destructive denylist.
+- Approval requirements for sudo, broad deletes, curl-pipe-shell, and outside-workspace mutations.
+
+Tests:
+
+- Schema validation.
+- Command classification.
+- Approval pause/resume.
+- Cancellation.
+- Timeout.
+- Secret redaction.
+- Replay metadata and persisted events.

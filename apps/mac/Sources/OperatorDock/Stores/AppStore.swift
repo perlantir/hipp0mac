@@ -22,6 +22,7 @@ final class AppStore {
   var workspace: WorkspaceSettings?
   var workspaceFiles: [FileEntry] = []
   var fileExplorerPath = "."
+  var pendingApprovals: [ToolApproval] = []
   var commandText = ""
   var isCreatingTestTask = false
   var isRefreshingProviders = false
@@ -55,6 +56,7 @@ final class AppStore {
       await refreshTasks()
       await refreshProviders()
       await refreshWorkspace()
+      await refreshToolApprovals()
     }
   }
 
@@ -102,6 +104,26 @@ final class AppStore {
     do {
       workspace = try await client.workspace()
       workspaceFiles = try await client.listWorkspaceFiles(path: fileExplorerPath)
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func refreshToolApprovals() async {
+    do {
+      pendingApprovals = try await client.listToolApprovals()
+      lastError = nil
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func resolveToolApproval(_ approval: ToolApproval, approved: Bool) async {
+    do {
+      _ = try await client.resolveToolApproval(id: approval.id, approved: approved)
+      pendingApprovals.removeAll { $0.id == approval.id }
+      await refreshToolApprovals()
       lastError = nil
     } catch {
       lastError = error.localizedDescription
@@ -251,6 +273,13 @@ final class AppStore {
 
         if let task = event.task {
           upsert(task)
+        }
+
+        if event.type == "approval.required"
+          || event.type == "tool.completed"
+          || event.type == "tool.failed"
+          || event.type == "tool.cancelled" {
+          await refreshToolApprovals()
         }
       }
     } catch is CancellationError {

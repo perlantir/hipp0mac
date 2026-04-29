@@ -517,9 +517,17 @@ private struct ConfidenceBar: View {
   }
 }
 
+struct ApprovalScope: Identifiable {
+  let id = UUID()
+  let icon: String
+  let title: String
+  let detail: String
+}
+
 struct ApprovalModal: View {
   let title: String
   let details: String
+  var scopes: [ApprovalScope] = []
   let onApprove: () -> Void
   let onDecline: () -> Void
 
@@ -553,16 +561,18 @@ struct ApprovalModal: View {
       Divider()
         .overlay(ODTheme.ColorToken.border)
 
-      VStack(alignment: .leading, spacing: 10) {
-        ApprovalScopeRow(icon: "envelope", title: "Gmail", detail: "send 14 emails")
-        ApprovalScopeRow(icon: "list.bullet.rectangle", title: "Linear", detail: "read project context")
-        ApprovalScopeRow(icon: "brain", title: "Memory", detail: "write delivery outcome")
-      }
-      .padding(.horizontal, 28)
-      .padding(.vertical, 18)
+      if !scopes.isEmpty {
+        VStack(alignment: .leading, spacing: 10) {
+          ForEach(scopes) { scope in
+            ApprovalScopeRow(icon: scope.icon, title: scope.title, detail: scope.detail)
+          }
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 18)
 
-      Divider()
-        .overlay(ODTheme.ColorToken.border)
+        Divider()
+          .overlay(ODTheme.ColorToken.border)
+      }
 
       HStack(spacing: 12) {
         Label("Trust similar runs", systemImage: "checkmark.shield")
@@ -731,4 +741,3 @@ struct SectionLabel: View {
     }
   }
 }
-
