@@ -2,6 +2,7 @@
 
 Date: 2026-04-29<br>
 Branch: `phase-5b/tool-execution-safety`<br>
+PR: https://github.com/perlantir/hipp0mac/pull/1<br>
 Local/CI verification commit: `fed58f1a262206f36b28e98b18302a4feaa4b9ff`
 
 Status: `In Review`. This draft records the current implementation
