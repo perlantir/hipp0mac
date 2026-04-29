@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import OperatorDockCore
+import _Concurrency
 
 enum ConnectionState: String {
   case disconnected = "Disconnected"
@@ -35,7 +36,7 @@ final class AppStore {
 
   private let client: DaemonClient
   private let credentialStore: ProviderCredentialStore
-  private var eventStreamTask: Swift.Task<Void, Never>?
+  private var eventStreamTask: _Concurrency.Task<Void, Never>?
 
   init(client: DaemonClient, credentialStore: ProviderCredentialStore = ProviderCredentialStore()) {
     self.client = client
@@ -47,11 +48,11 @@ final class AppStore {
       return
     }
 
-    eventStreamTask = Swift.Task {
+    eventStreamTask = _Concurrency.Task {
       await listenForEvents()
     }
 
-    Swift.Task {
+    _Concurrency.Task {
       await refreshHealth()
       await refreshTasks()
       await refreshProviders()
