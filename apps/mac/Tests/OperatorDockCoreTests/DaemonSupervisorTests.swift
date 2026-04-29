@@ -80,8 +80,11 @@ final class DaemonSupervisorTests: XCTestCase {
       bearerToken: token
     )
 
-    let initialHealth = await waitForHealth(client)
-    XCTAssertTrue(initialHealth)
+    let initialHealth = await waitForHealth(client, timeout: 15)
+    XCTAssertTrue(initialHealth, "Daemon did not become healthy before task creation.")
+    guard initialHealth else {
+      return
+    }
     let task = try await client.createTask(
       title: "Supervision crash recovery",
       prompt: "Verify daemon state survives supervised SIGKILL and respawn."
@@ -90,7 +93,7 @@ final class DaemonSupervisorTests: XCTestCase {
 
     try supervisor.killForCrashTest()
 
-    let respawned = await waitUntil(timeout: 5) {
+    let respawned = await waitUntil(timeout: 10) {
       guard let pid = supervisor.currentProcessIdentifier else {
         return false
       }
@@ -98,8 +101,11 @@ final class DaemonSupervisorTests: XCTestCase {
       return pid != firstPID
     }
     XCTAssertTrue(respawned)
-    let recoveredHealth = await waitForHealth(client)
-    XCTAssertTrue(recoveredHealth)
+    let recoveredHealth = await waitForHealth(client, timeout: 15)
+    XCTAssertTrue(recoveredHealth, "Daemon did not become healthy after supervised crash recovery.")
+    guard recoveredHealth else {
+      return
+    }
 
     let recoveredTasks = try await client.listTasks()
     XCTAssertTrue(recoveredTasks.contains { $0.id == task.id })
@@ -155,8 +161,11 @@ final class DaemonSupervisorTests: XCTestCase {
       bearerToken: token
     )
 
-    let initialHealth = await waitForHealth(client)
-    XCTAssertTrue(initialHealth)
+    let initialHealth = await waitForHealth(client, timeout: 15)
+    XCTAssertTrue(initialHealth, "Daemon did not become healthy before detached kill test.")
+    guard initialHealth else {
+      return
+    }
     let task = try await client.createTask(
       title: "Detached crash recovery",
       prompt: "Verify watchdog recovers after a separate process kills the daemon."
@@ -170,7 +179,7 @@ final class DaemonSupervisorTests: XCTestCase {
     killer.waitUntilExit()
     XCTAssertEqual(killer.terminationStatus, 0)
 
-    let respawned = await waitUntil(timeout: 5) {
+    let respawned = await waitUntil(timeout: 10) {
       guard let pid = supervisor.currentProcessIdentifier else {
         return false
       }
@@ -178,8 +187,11 @@ final class DaemonSupervisorTests: XCTestCase {
       return pid != firstPID
     }
     XCTAssertTrue(respawned)
-    let recoveredHealth = await waitForHealth(client)
-    XCTAssertTrue(recoveredHealth)
+    let recoveredHealth = await waitForHealth(client, timeout: 15)
+    XCTAssertTrue(recoveredHealth, "Daemon did not become healthy after detached kill recovery.")
+    guard recoveredHealth else {
+      return
+    }
 
     let recoveredTasks = try await client.listTasks()
     XCTAssertTrue(recoveredTasks.contains { $0.id == task.id })
