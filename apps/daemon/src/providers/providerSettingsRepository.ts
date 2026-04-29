@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../db/types.js";
 import {
   ModelRouterConfigSchema,
   ProviderConfigSchema,
@@ -35,7 +35,7 @@ const defaultRouterConfig: ModelRouterConfig = {
 };
 
 export class ProviderSettingsRepository {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseConnection) {}
 
   listProviders(): ProviderConfig[] {
     const document = this.readDocument();

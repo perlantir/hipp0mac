@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../../db/types.js";
 import {
   ToolApprovalSchema,
   type JsonValue,
@@ -34,7 +34,7 @@ interface ToolApprovalRow {
 }
 
 export class ToolApprovalStore {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseConnection) {}
 
   create(input: CreateToolApprovalInput): StoredToolApproval {
     const now = new Date().toISOString();

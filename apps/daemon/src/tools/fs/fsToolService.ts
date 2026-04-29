@@ -29,6 +29,7 @@ import {
 } from "@operator-dock/protocol";
 import { WorkspacePathSafety, type SafetyDecision } from "../../workspace/pathSafety.js";
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
+import type { LockController } from "../../persistence/lockController.js";
 import type { ToolEventStore } from "../runtime/toolEventStore.js";
 import { FileOperationLogger } from "./fileOperationLogger.js";
 
@@ -54,7 +55,8 @@ export class FsToolService {
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly events: ToolEventStore,
-    private readonly fileLogger: FileOperationLogger
+    private readonly fileLogger: FileOperationLogger,
+    private readonly locks: LockController
   ) {}
 
   async read(rawInput: unknown): Promise<ToolResult> {
@@ -259,14 +261,17 @@ export class FsToolService {
     operation: (executionId: string) => Promise<JsonValue | SafetyFailure>
   ): Promise<ToolResult> {
     const workspace = this.workspaceService.requireWorkspace();
+    const taskId = "legacy-fs-direct";
+    const lock = this.locks.acquire(taskId);
     let result = this.events.createExecution({
+      taskId,
       toolName,
       input,
       riskLevel,
+      lockEventId: lock.lockEventId,
       workspaceRoot: workspace.rootPath
     });
-
-    const started = this.events.recordEvent(result.executionId, toolName, "tool.started", {
+    let started = this.events.recordEvent(result.executionId, toolName, "tool.started", {
       input
     });
 
@@ -320,6 +325,8 @@ export class FsToolService {
         "FILE_OPERATION_FAILED",
         (error as Error).message
       );
+    } finally {
+      this.locks.release(lock);
     }
   }
 

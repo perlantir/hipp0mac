@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "./types.js";
 
-export function runMigrations(database: DatabaseSync, migrationsDir: string): void {
+export function runMigrations(database: DatabaseConnection, migrationsDir: string): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,

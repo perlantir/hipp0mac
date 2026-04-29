@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../db/types.js";
 import type { Task, TaskCreateInput } from "@operator-dock/protocol";
 
 interface TaskRow {
@@ -15,7 +15,7 @@ interface TaskRow {
 }
 
 export class TaskRepository {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseConnection) {}
 
   createTask(input: TaskCreateInput): Task {
     const now = new Date().toISOString();

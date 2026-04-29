@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../../db/types.js";
 import type { JsonValue } from "@operator-dock/protocol";
 
 export interface FileOperationLogInput {
@@ -14,7 +14,7 @@ export interface FileOperationLogInput {
 }
 
 export class FileOperationLogger {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseConnection) {}
 
   log(input: FileOperationLogInput): void {
     this.database
@@ -46,4 +46,3 @@ export class FileOperationLogger {
       );
   }
 }
-

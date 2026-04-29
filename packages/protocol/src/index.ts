@@ -424,8 +424,12 @@ export const ToolErrorSchema = z.object({
 });
 
 export const ToolReplayMetadataSchema = z.object({
+  taskId: z.string().trim().min(1).optional(),
   inputHash: z.string(),
   workspaceRoot: z.string().optional(),
+  lockEventId: z.string().optional(),
+  intendedEventId: z.string().optional(),
+  resultEventId: z.string().optional(),
   startedAt: isoDateTimeSchema,
   completedAt: isoDateTimeSchema.optional(),
   attempts: z.number().int().positive().default(1)
@@ -454,6 +458,7 @@ export const ToolResultSchema = z.object({
 });
 
 export const ToolExecutionRequestSchema = z.object({
+  taskId: z.string().trim().min(1).optional(),
   toolName: z.string().trim().min(1),
   input: jsonObjectSchema,
   timeoutMs: z.number().int().positive().max(120_000).optional(),

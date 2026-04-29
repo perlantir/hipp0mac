@@ -22,17 +22,20 @@ public struct DaemonClient: Sendable {
   public let webSocketURL: URL
 
   private let session: URLSession
+  private let bearerToken: String?
   private let decoder = JSONDecoder()
   private let encoder = JSONEncoder()
 
   public init(
     baseURL: URL = URL(string: "http://127.0.0.1:4768")!,
     webSocketURL: URL = URL(string: "ws://127.0.0.1:4768/v1/events")!,
-    session: URLSession = .shared
+    session: URLSession = .shared,
+    bearerToken: String? = DaemonAuthTokenStore().loadOrCreateTokenIgnoringErrors()
   ) {
     self.baseURL = baseURL
     self.webSocketURL = webSocketURL
     self.session = session
+    self.bearerToken = bearerToken
   }
 
   public func health() async throws -> HealthResponse {
@@ -125,7 +128,9 @@ public struct DaemonClient: Sendable {
 
   public func events() -> AsyncThrowingStream<OperatorEvent, Error> {
     AsyncThrowingStream { continuation in
-      let task = session.webSocketTask(with: webSocketURL)
+      var request = URLRequest(url: webSocketURL)
+      applyAuth(to: &request)
+      let task = session.webSocketTask(with: request)
       task.resume()
       receiveNextMessage(from: task, continuation: continuation)
 
@@ -174,6 +179,8 @@ public struct DaemonClient: Sendable {
   }
 
   private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {
+    var request = request
+    applyAuth(to: &request)
     let (data, response) = try await session.data(for: request)
 
     guard let httpResponse = response as? HTTPURLResponse else {
@@ -186,6 +193,13 @@ public struct DaemonClient: Sendable {
     }
 
     return try decoder.decode(Response.self, from: data)
+  }
+
+  private func applyAuth(to request: inout URLRequest) {
+    guard let bearerToken, !bearerToken.isEmpty else {
+      return
+    }
+    request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "authorization")
   }
 
   private func decodeErrorMessage(from data: Data) -> String? {

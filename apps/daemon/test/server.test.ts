@@ -1,11 +1,15 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3-multiple-ciphers";
 import { CreateTaskResponseSchema, HealthResponseSchema } from "@operator-dock/protocol";
 import { loadConfig } from "../src/config.js";
+import { openDatabase } from "../src/db/connection.js";
 import { buildApp } from "../src/server.js";
 import { EventBus } from "../src/websocket/eventBus.js";
+import { authHeaders, authStore, persistenceKeyManager } from "./harness.js";
 
 const tempRoots = new Set<string>();
 
@@ -21,6 +25,8 @@ function testConfig() {
   tempRoots.add(root);
 
   return loadConfig({
+    HOME: root,
+    OPERATOR_DOCK_STATE_ROOT: join(root, "state"),
     OPERATOR_DOCK_DB_PATH: join(root, "operator-dock.sqlite"),
     OPERATOR_DOCK_MIGRATIONS_DIR: resolve("migrations")
   });
@@ -30,12 +36,15 @@ describe("daemon server", () => {
   it("returns health status", async () => {
     const app = await buildApp({
       config: testConfig(),
+      authTokenStore: authStore(),
+      persistenceKeyManager: persistenceKeyManager(),
       logger: false
     });
 
     const response = await app.inject({
       method: "GET",
-      url: "/health"
+      url: "/health",
+      headers: authHeaders()
     });
 
     await app.close();
@@ -52,12 +61,15 @@ describe("daemon server", () => {
     const app = await buildApp({
       config: testConfig(),
       eventBus,
+      authTokenStore: authStore(),
+      persistenceKeyManager: persistenceKeyManager(),
       logger: false
     });
 
     const response = await app.inject({
       method: "POST",
       url: "/v1/tasks",
+      headers: authHeaders(),
       payload: {
         title: "Write an outline",
         prompt: "Create a short implementation outline.",
@@ -84,5 +96,163 @@ describe("daemon server", () => {
       }
     });
   });
+
+  it("requires bearer token auth on HTTP and WebSocket requests", async () => {
+    const app = await buildApp({
+      config: testConfig(),
+      authTokenStore: authStore(),
+      persistenceKeyManager: persistenceKeyManager(),
+      logger: false
+    });
+
+    const missingHttp = await app.inject({
+      method: "GET",
+      url: "/health"
+    });
+    const wrongHttp = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: authHeaders("wrong-token")
+    });
+    const missingWebSocket = await app.inject({
+      method: "GET",
+      url: "/v1/events",
+      headers: {
+        connection: "upgrade",
+        upgrade: "websocket"
+      }
+    });
+
+    await app.close();
+
+    expect(missingHttp.statusCode).toBe(401);
+    expect(wrongHttp.statusCode).toBe(401);
+    expect(missingWebSocket.statusCode).toBe(401);
+  });
+
+  it("rejects non-loopback daemon hosts unless explicitly enabled", () => {
+    expect(() => loadConfig({ OPERATOR_DOCK_HOST: "0.0.0.0" })).toThrow("Refusing to bind");
+    expect(() => loadConfig({ OPERATOR_DOCK_HOST: "localhost" })).toThrow("Refusing to bind");
+    expect(loadConfig({
+      OPERATOR_DOCK_HOST: "0.0.0.0",
+      OPERATOR_DOCK_ALLOW_NETWORK_BIND: "1"
+    }).host).toBe("0.0.0.0");
+  });
+
+  it("migrates default Node daemon state from the v0 dot-folder layout", () => {
+    const home = mkdtempSync(join(tmpdir(), "operator-dock-node-state-"));
+    tempRoots.add(home);
+    const legacyRoot = join(home, ".operator-dock");
+    mkdirSync(legacyRoot, { recursive: true });
+    writeFileSync(join(legacyRoot, "operator-dock.sqlite"), "legacy-db");
+    writeFileSync(join(legacyRoot, "operator-dock.sqlite-wal"), "legacy-wal");
+
+    const config = loadConfig({
+      HOME: home,
+      OPERATOR_DOCK_MIGRATIONS_DIR: resolve("migrations")
+    });
+
+    const stateRoot = join(home, "Library", "Application Support", "OperatorDock", "state");
+    expect(config.databasePath).toBe(join(stateRoot, "operator-dock.sqlite"));
+    expect(existsSync(join(stateRoot, "operator-dock.sqlite"))).toBe(true);
+    expect(existsSync(join(stateRoot, "operator-dock.sqlite-wal"))).toBe(true);
+    expect(existsSync(join(stateRoot, ".migrated-from-v0"))).toBe(true);
+    expect(existsSync(legacyRoot)).toBe(false);
+  });
+
+  it("encrypts SQLite pages with the persistence master key", async () => {
+    const root = mkdtempSync(join(tmpdir(), "operator-dock-sqlcipher-"));
+    tempRoots.add(root);
+    const config = loadConfig({
+      HOME: root,
+      OPERATOR_DOCK_STATE_ROOT: join(root, "state"),
+      OPERATOR_DOCK_DB_PATH: join(root, "operator-dock.sqlite"),
+      OPERATOR_DOCK_MIGRATIONS_DIR: resolve("migrations")
+    });
+    const app = await buildApp({
+      config,
+      authTokenStore: authStore(),
+      persistenceKeyManager: persistenceKeyManager(),
+      logger: false
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/tasks",
+      headers: authHeaders(),
+      payload: {
+        title: "Encrypted SQLite Needle",
+        prompt: "Store this in the encrypted page database."
+      }
+    });
+
+    await app.close();
+
+    expect(response.statusCode).toBe(201);
+    expect(readFileSync(config.databasePath)).not.toContain(Buffer.from("Encrypted SQLite Needle"));
+    expect(() => openDatabase({
+      databasePath: config.databasePath,
+      encryptionKey: Buffer.alloc(32, 0x99)
+    })).toThrow();
+  });
+
+  it("migrates existing plaintext SQLite content to SQLCipher pages", () => {
+    const root = mkdtempSync(join(tmpdir(), "operator-dock-sqlcipher-migrate-"));
+    tempRoots.add(root);
+    const databasePath = join(root, "operator-dock.sqlite");
+    const plaintext = new Database(databasePath);
+    plaintext.exec("CREATE TABLE secrets (value TEXT NOT NULL); INSERT INTO secrets VALUES ('plaintext migration needle');");
+    plaintext.close();
+    expect(readFileSync(databasePath).subarray(0, 16).toString("utf8")).toBe("SQLite format 3\0");
+
+    const encryptionKey = Buffer.alloc(32, 0x42);
+    const encrypted = openDatabase({ databasePath, encryptionKey });
+
+    expect(encrypted.prepare("SELECT value FROM secrets").get()).toEqual({
+      value: "plaintext migration needle"
+    });
+    encrypted.close();
+    expect(readFileSync(databasePath)).not.toContain(Buffer.from("plaintext migration needle"));
+    expect(readFileSync(databasePath).subarray(0, 16).toString("utf8")).not.toBe("SQLite format 3\0");
+    expect(existsSync(`${databasePath}.plaintext-v0.bak`)).toBe(true);
+  });
+
+  it("redacts secrets from Fastify error logs", async () => {
+    const logSink = new CapturingWritable();
+    const app = await buildApp({
+      config: testConfig(),
+      authTokenStore: authStore(),
+      persistenceKeyManager: persistenceKeyManager(),
+      logger: true,
+      logStream: logSink
+    });
+    app.post("/__test/secret-error", async (request) => {
+      throw new Error(`synthetic failure ${(request.body as { apiKey: string }).apiKey} token=super-secret-token`);
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/__test/secret-error",
+      headers: authHeaders(),
+      payload: {
+        apiKey: "sk-test-secret-value"
+      }
+    });
+
+    await app.close();
+
+    expect(response.statusCode).toBe(500);
+    expect(logSink.output).toContain("[REDACTED]");
+    expect(logSink.output).not.toContain("sk-test-secret-value");
+    expect(logSink.output).not.toContain("super-secret-token");
+  });
 });
 
+class CapturingWritable extends Writable {
+  output = "";
+
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    this.output += chunk.toString("utf8");
+    callback();
+  }
+}

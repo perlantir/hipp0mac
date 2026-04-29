@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../db/types.js";
 import type { WorkspaceSettings } from "@operator-dock/protocol";
 
 interface SettingsRow {
@@ -8,7 +8,7 @@ interface SettingsRow {
 const workspaceSettingsKey = "workspace.config";
 
 export class WorkspaceSettingsRepository {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseConnection) {}
 
   get(): WorkspaceSettings | undefined {
     const row = this.database

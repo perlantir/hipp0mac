@@ -3,9 +3,17 @@ import SwiftUI
 import OperatorDockCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+  private var daemonSupervisor: DaemonSupervisor?
+
   func applicationDidFinishLaunching(_ notification: Notification) {
+    daemonSupervisor = DaemonSupervisor.live()
+    try? daemonSupervisor?.start()
     NSApp.setActivationPolicy(.regular)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    daemonSupervisor?.stop()
   }
 }
 
@@ -36,4 +44,3 @@ struct OperatorDockApp: App {
     }
   }
 }
-

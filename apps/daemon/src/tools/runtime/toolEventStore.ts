@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseConnection } from "../../db/types.js";
 import {
   ToolEventRecordSchema,
   ToolResultSchema,
@@ -11,12 +11,16 @@ import {
   type ToolResult,
   type ToolRiskLevel
 } from "@operator-dock/protocol";
+import type { EventStore } from "../../persistence/eventStore.js";
+import { canonicalJson } from "../../persistence/canonicalJson.js";
 import type { EventBus } from "../../websocket/eventBus.js";
 
 export interface CreateExecutionInput {
+  taskId: string;
   toolName: string;
   input: Record<string, JsonValue>;
   riskLevel: ToolRiskLevel;
+  lockEventId?: string;
   workspaceRoot?: string;
 }
 
@@ -30,6 +34,10 @@ interface ToolExecutionRow {
   error_message: string | null;
   raw_output_ref: string | null;
   replay_json: string;
+  task_id: string | null;
+  intended_event_id: string | null;
+  result_event_id: string | null;
+  lock_event_id: string | null;
 }
 
 interface ToolEventRow {
@@ -43,16 +51,27 @@ interface ToolEventRow {
 
 export class ToolEventStore {
   constructor(
-    private readonly database: DatabaseSync,
-    private readonly eventBus: EventBus
+    private readonly database: DatabaseConnection,
+    private readonly eventBus: EventBus,
+    private readonly eventStore: EventStore
   ) {}
 
   createExecution(input: CreateExecutionInput): ToolResult {
     const now = new Date().toISOString();
     const executionId = randomUUID();
+    const intendedEventId = this.eventStore.append(input.taskId, "tool_call_intended", {
+      executionId,
+      toolName: input.toolName,
+      input: input.input,
+      riskLevel: input.riskLevel,
+      ...(input.lockEventId === undefined ? {} : { lockEventId: input.lockEventId })
+    });
     const replay = {
+      taskId: input.taskId,
       inputHash: hashJson(input.input),
       workspaceRoot: input.workspaceRoot,
+      ...(input.lockEventId === undefined ? {} : { lockEventId: input.lockEventId }),
+      intendedEventId,
       startedAt: now,
       attempts: 1
     };
@@ -66,9 +85,13 @@ export class ToolEventStore {
           risk_level,
           input_json,
           replay_json,
+          legacy,
+          task_id,
+          intended_event_id,
+          lock_event_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         executionId,
@@ -77,6 +100,10 @@ export class ToolEventStore {
         input.riskLevel,
         JSON.stringify(input.input),
         JSON.stringify(replay),
+        0,
+        input.taskId,
+        intendedEventId,
+        input.lockEventId ?? null,
         now,
         now
       );
@@ -104,7 +131,11 @@ export class ToolEventStore {
           error_code,
           error_message,
           raw_output_ref,
-          replay_json
+          replay_json,
+          task_id,
+          intended_event_id,
+          result_event_id,
+          lock_event_id
         FROM tool_executions
         WHERE id = ?
       `)
@@ -214,9 +245,23 @@ export class ToolEventStore {
       || status === "failed"
       || status === "cancelled"
       || status === "timed_out";
+    const taskId = typeof result.replay.taskId === "string" ? result.replay.taskId : undefined;
+    const resultEventId = terminal && taskId !== undefined
+      ? this.eventStore.append(taskId, "tool_call_result", {
+        executionId: result.executionId,
+        toolName: result.toolName,
+        status,
+        ok: status === "completed",
+        ...(output === undefined ? {} : { output }),
+        ...(errorCode === undefined ? {} : { errorCode }),
+        ...(errorMessage === undefined ? {} : { errorMessage }),
+        ...(rawOutputRef === undefined ? {} : { rawOutputRef })
+      })
+      : undefined;
     const replay = terminal
       ? {
         ...result.replay,
+        ...(resultEventId === undefined ? {} : { resultEventId }),
         completedAt: now
       }
       : result.replay;
@@ -231,6 +276,7 @@ export class ToolEventStore {
           error_message = ?,
           raw_output_ref = ?,
           replay_json = ?,
+          result_event_id = COALESCE(?, result_event_id),
           updated_at = ?
         WHERE id = ?
       `)
@@ -241,6 +287,7 @@ export class ToolEventStore {
         errorMessage ?? null,
         rawOutputRef ?? null,
         JSON.stringify(replay),
+        resultEventId ?? null,
         now,
         result.executionId
       );
@@ -321,5 +368,5 @@ export class ToolEventStore {
 }
 
 function hashJson(value: Record<string, JsonValue>): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }

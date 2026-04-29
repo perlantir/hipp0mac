@@ -1,0 +1,31 @@
+name: Phase 5A Node Persistence
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "phase-5a/**"
+
+jobs:
+  node-and-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Phase 5A coverage
+        run: npm run test:coverage -w @operator-dock/daemon

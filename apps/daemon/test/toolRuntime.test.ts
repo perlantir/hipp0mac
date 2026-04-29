@@ -1,16 +1,19 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ToolApprovalListResponseSchema,
   ToolExecutionResponseSchema
 } from "@operator-dock/protocol";
 import { loadConfig } from "../src/config.js";
+import { openDatabase } from "../src/db/connection.js";
+import { EventStore } from "../src/persistence/eventStore.js";
+import { OperatorDockPaths } from "../src/persistence/paths.js";
 import { buildApp } from "../src/server.js";
 import { classifyShellCommand } from "../src/tools/shell/commandRiskClassifier.js";
 import { EventBus } from "../src/websocket/eventBus.js";
+import { authHeaders, authStore, persistenceKeyManager } from "./harness.js";
 
 const tempRoots = new Set<string>();
 
@@ -29,6 +32,8 @@ function tempRoot(prefix: string): string {
 
 function testConfig(root: string) {
   return loadConfig({
+    HOME: root,
+    OPERATOR_DOCK_STATE_ROOT: join(root, "state"),
     OPERATOR_DOCK_DB_PATH: join(root, "operator-dock.sqlite"),
     OPERATOR_DOCK_MIGRATIONS_DIR: resolve("migrations")
   });
@@ -38,15 +43,19 @@ async function configuredApp() {
   const root = tempRoot("operator-dock-runtime-");
   const workspaceRoot = join(root, "workspace");
   const eventBus = new EventBus();
+  const keyManager = persistenceKeyManager();
   const app = await buildApp({
     config: testConfig(root),
     eventBus,
+    authTokenStore: authStore(),
+    persistenceKeyManager: keyManager,
     logger: false
   });
 
   const workspaceResponse = await app.inject({
     method: "PUT",
     url: "/v1/workspace",
+    headers: authHeaders(),
     payload: {
       rootPath: workspaceRoot
     }
@@ -57,7 +66,8 @@ async function configuredApp() {
     app,
     root,
     workspaceRoot,
-    eventBus
+    eventBus,
+    keyManager
   };
 }
 
@@ -68,6 +78,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "fs.write",
         input: {
@@ -104,12 +115,13 @@ describe("tool runtime safety governor", () => {
   });
 
   it("pauses for approval and resumes approved shell execution", async () => {
-    const { app, root } = await configuredApp();
+    const { app, root, keyManager } = await configuredApp();
     const outsidePath = join(root, "approved-shell.txt");
 
     const pendingResponse = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -125,7 +137,8 @@ describe("tool runtime safety governor", () => {
 
     const approvalsResponse = await app.inject({
       method: "GET",
-      url: "/v1/tools/approvals"
+      url: "/v1/tools/approvals",
+      headers: authHeaders()
     });
     const approvals = ToolApprovalListResponseSchema.parse(approvalsResponse.json()).approvals;
     expect(approvals.map((approval) => approval.id)).toContain(approvalId);
@@ -133,6 +146,7 @@ describe("tool runtime safety governor", () => {
     const resolvedResponse = await app.inject({
       method: "POST",
       url: `/v1/tools/approvals/${approvalId}/resolve`,
+      headers: authHeaders(),
       payload: {
         approved: true
       }
@@ -153,6 +167,7 @@ describe("tool runtime safety governor", () => {
     const running = app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -165,7 +180,8 @@ describe("tool runtime safety governor", () => {
     const executionId = await waitForExecutionId(events);
     const cancelResponse = await app.inject({
       method: "POST",
-      url: `/v1/tools/executions/${executionId}/cancel`
+      url: `/v1/tools/executions/${executionId}/cancel`,
+      headers: authHeaders()
     });
     expect(cancelResponse.statusCode).toBe(200);
 
@@ -184,6 +200,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         timeoutMs: 50,
@@ -206,6 +223,7 @@ describe("tool runtime safety governor", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
         toolName: "shell.run",
         input: {
@@ -226,17 +244,19 @@ describe("tool runtime safety governor", () => {
     expect(readFileSync(result.rawOutputRef!, "utf8")).not.toContain("super-secret-token");
   });
 
-  it("records replay metadata and persists tool events", async () => {
-    const { app, root } = await configuredApp();
+  it("acquires a task lock before canonical tool intent and derives SQLite projections", async () => {
+    const { app, root, keyManager } = await configuredApp();
 
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
+      headers: authHeaders(),
       payload: {
+        taskId: "task-runtime-lock",
         toolName: "fs.write",
         input: {
           path: "tasks/replay.md",
-          content: "metadata"
+          content: "phase5-sensitive-payload-needle"
         },
         retry: 1
       }
@@ -249,17 +269,53 @@ describe("tool runtime safety governor", () => {
     expect(result.status).toBe("completed");
     expect(result.replay.inputHash).toHaveLength(64);
     expect(result.replay.attempts).toBe(1);
+    expect(result.replay.taskId).toBe("task-runtime-lock");
+    expect(result.replay.intendedEventId).toBeDefined();
+    expect(result.replay.resultEventId).toBeDefined();
     expect(result.events.map((event) => event.type)).toEqual(
       expect.arrayContaining(["tool.started", "tool.output", "tool.completed"])
     );
     expect(existsSync(dbPath)).toBe(true);
 
-    const database = new DatabaseSync(dbPath, { readOnly: true });
+    const keys = await keyManager.loadOrCreateKeys();
+    const eventStore = new EventStore(new OperatorDockPaths(join(root, "state")), keys);
+    const canonicalEvents = eventStore.readAll("task-runtime-lock");
+    expect(canonicalEvents.map((event) => event.eventType)).toEqual([
+      "lock_acquired",
+      "tool_call_intended",
+      "tool_call_result",
+      "lock_released"
+    ]);
+    expect(canonicalEvents[0]!.eventId).toBe(result.replay.lockEventId);
+
+    const database = openDatabase({
+      databasePath: dbPath,
+      encryptionKey: keys.encryptionKey,
+      readonly: true
+    });
     const row = database
-      .prepare("SELECT COUNT(*) AS count FROM tool_events WHERE execution_id = ?")
-      .get(result.executionId) as { count: number };
+      .prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM tool_events WHERE execution_id = ?) AS count,
+          legacy,
+          intended_event_id,
+          result_event_id
+        FROM tool_executions
+        WHERE id = ?
+      `)
+      .get(result.executionId, result.executionId) as {
+        count: number;
+        legacy: number;
+        intended_event_id: string;
+        result_event_id: string;
+      };
     database.close();
     expect(row.count).toBeGreaterThanOrEqual(3);
+    expect(row.legacy).toBe(0);
+    expect(row.intended_event_id).toBe(result.replay.intendedEventId);
+    expect(row.result_event_id).toBe(result.replay.resultEventId);
+    expect(readFileSync(dbPath)).not.toContain(Buffer.from("phase5-sensitive-payload-needle"));
+    expect(readFileSync(dbPath)).not.toContain(Buffer.from("tasks/replay.md"));
   });
 });
 

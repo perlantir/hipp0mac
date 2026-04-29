@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { Writable } from "node:stream";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import {
@@ -11,11 +11,27 @@ import {
 } from "@operator-dock/protocol";
 import { loadConfig, type DaemonConfig } from "./config.js";
 import { openDatabase } from "./db/connection.js";
+import type { DatabaseConnection } from "./db/types.js";
 import { runMigrations } from "./db/migrations.js";
 import { ApiError } from "./errors.js";
+import { EventStore } from "./persistence/eventStore.js";
+import { LockController } from "./persistence/lockController.js";
+import { OperatorDockPaths } from "./persistence/paths.js";
+import {
+  PersistenceKeyManager,
+  persistenceKeyManagerFromEnv,
+  type PersistenceKeys
+} from "./persistence/persistenceKeys.js";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/credentialStore.js";
 import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
 import { registerProviderRoutes } from "./providers/routes.js";
+import {
+  bearerTokenFromRequest,
+  daemonAuthTokenStoreFromEnv,
+  tokensEqual,
+  type DaemonAuthTokenStore
+} from "./security/daemonAuth.js";
+import { fastifyLoggerOptions } from "./security/redactedLogger.js";
 import { TaskRepository } from "./tasks/taskRepository.js";
 import { fsToolDefinitions } from "./tools/fs/fsToolDefinitions.js";
 import { FileOperationLogger } from "./tools/fs/fileOperationLogger.js";
@@ -32,35 +48,52 @@ import { WorkspaceService } from "./workspace/workspaceService.js";
 
 export interface BuildAppOptions {
   config?: DaemonConfig;
-  database?: DatabaseSync;
+  database?: DatabaseConnection;
   eventBus?: EventBus;
   credentialStore?: CredentialStore;
+  authTokenStore?: DaemonAuthTokenStore;
+  persistenceKeyManager?: PersistenceKeyManager;
+  persistenceKeys?: PersistenceKeys;
   logger?: boolean;
+  logStream?: Writable;
   migrate?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
+  const paths = new OperatorDockPaths(config.stateRoot);
+  paths.createLayout();
+  const persistenceKeys = options.persistenceKeys
+    ?? await (options.persistenceKeyManager
+      ?? persistenceKeyManagerFromEnv(process.env)).loadOrCreateKeys();
   const ownsDatabase = options.database === undefined;
-  const database = options.database ?? openDatabase(config.databasePath);
+  const database = options.database ?? openDatabase({
+    databasePath: config.databasePath,
+    encryptionKey: persistenceKeys.encryptionKey
+  });
   const eventBus = options.eventBus ?? new EventBus();
   const credentialStore = options.credentialStore ?? new MacOSKeychainCredentialStore();
+  const authToken = await (options.authTokenStore ?? daemonAuthTokenStoreFromEnv(process.env)).loadOrCreateToken();
+  const eventStore = new EventStore(paths, persistenceKeys);
+  const locks = new LockController(paths, eventStore);
 
   if (options.migrate !== false) {
     runMigrations(database, config.migrationsDir);
+    emitLegacyProjectionNotice(database, eventStore);
   }
 
   const tasks = new TaskRepository(database);
   const providerSettings = new ProviderSettingsRepository(database);
   const workspace = new WorkspaceService(new WorkspaceSettingsRepository(database));
-  const toolEvents = new ToolEventStore(database, eventBus);
+  const toolEvents = new ToolEventStore(database, eventBus, eventStore);
   const fileLogger = new FileOperationLogger(database);
-  const fsTools = new FsToolService(workspace, toolEvents, fileLogger);
+  const fsTools = new FsToolService(workspace, toolEvents, fileLogger, locks);
   const toolApprovals = new ToolApprovalStore(database);
   const toolRuntime = new ToolRuntime({
     workspace,
     events: toolEvents,
-    approvals: toolApprovals
+    approvals: toolApprovals,
+    locks
   });
   for (const tool of fsToolDefinitions(fsTools)) {
     toolRuntime.register(tool);
@@ -68,7 +101,23 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   toolRuntime.register(shellRunTool());
   toolRuntime.register(shellRunInteractiveTool());
   const app = Fastify({
-    logger: options.logger ?? true
+    logger: fastifyLoggerOptions({
+      enabled: options.logger ?? true,
+      ...(options.logStream === undefined ? {} : { stream: options.logStream })
+    })
+  });
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (!tokensEqual(bearerTokenFromRequest(request), authToken)) {
+      return reply.status(401).send({
+        error: {
+          code: "UNAUTHORIZED",
+          message: "Missing or invalid daemon bearer token."
+        }
+      });
+    }
+
+    return undefined;
   });
 
   app.setErrorHandler((error, _request, reply) => {
@@ -135,6 +184,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     }
 
     const task = tasks.createTask(parsed.data);
+    eventStore.append(task.id, "task_created", {
+      title: task.title,
+      priority: task.priority,
+      metadata: task.metadata
+    });
     const event: OperatorEvent = {
       id: randomUUID(),
       type: "task.created",
@@ -168,4 +222,39 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   return app;
+}
+
+function emitLegacyProjectionNotice(database: DatabaseConnection, eventStore: EventStore): void {
+  const marker = database
+    .prepare("SELECT value_json FROM settings WHERE key = ?")
+    .get("phase5a.legacy_data_present_emitted") as { value_json: string } | undefined;
+  if (marker !== undefined) {
+    return;
+  }
+
+  const toolExecutions = (database.prepare("SELECT COUNT(*) AS count FROM tool_executions WHERE legacy = 1").get() as { count: number }).count;
+  const toolEvents = (database.prepare("SELECT COUNT(*) AS count FROM tool_events WHERE legacy = 1").get() as { count: number }).count;
+  const fileLogs = (database.prepare("SELECT COUNT(*) AS count FROM file_operation_logs WHERE legacy = 1").get() as { count: number }).count;
+
+  if (toolExecutions + toolEvents + fileLogs > 0) {
+    eventStore.append("daemon", "legacy_data_present", {
+      toolExecutions,
+      toolEvents,
+      fileOperationLogs: fileLogs
+    });
+  }
+
+  database
+    .prepare(`
+      INSERT INTO settings (key, value_json, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value_json = excluded.value_json,
+        updated_at = excluded.updated_at
+    `)
+    .run(
+      "phase5a.legacy_data_present_emitted",
+      JSON.stringify({ schemaVersion: 1, emitted: true }),
+      new Date().toISOString()
+    );
 }

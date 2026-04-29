@@ -10,6 +10,7 @@ import {
   type ToolRiskLevel
 } from "@operator-dock/protocol";
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
+import type { LockController, TaskLockHandle } from "../../persistence/lockController.js";
 import { FsToolSafetyError } from "../fs/fsToolService.js";
 import { collectSecretValues, redactJson, redactText } from "./secretRedaction.js";
 import type { ToolApprovalStore, StoredToolApproval } from "./toolApprovalStore.js";
@@ -20,6 +21,7 @@ export interface ToolRuntimeDependencies {
   workspace: WorkspaceService;
   events: ToolEventStore;
   approvals: ToolApprovalStore;
+  locks: LockController;
 }
 
 interface ActiveExecution {
@@ -118,83 +120,94 @@ export class ToolRuntime {
       ? tool.classifyRisk?.(parseResult.data, { workspace: this.dependencies.workspace }) ?? tool.riskLevel
       : tool.riskLevel;
     const workspaceRoot = this.dependencies.workspace.getWorkspace()?.rootPath;
-    const createExecutionInput = {
-      toolName: tool.name,
-      input: redactedInput,
-      riskLevel: baseRisk,
-      ...(workspaceRoot === undefined ? {} : { workspaceRoot })
-    };
-    let result = existingResult === undefined
-      ? this.dependencies.events.createExecution(createExecutionInput)
-      : this.dependencies.events.markRunning(existingResult);
+    const taskId = existingResult === undefined
+      ? request.taskId ?? "tool-runtime"
+      : existingResult.replay.taskId ?? request.taskId ?? "tool-runtime";
+    const lock = this.dependencies.locks.acquire(taskId);
 
-    if (!parseResult.success) {
-      return this.failWithSchemaError(result, tool.name, parseResult.error);
-    }
+    try {
+      const createExecutionInput = {
+        taskId,
+        toolName: tool.name,
+        input: redactedInput,
+        riskLevel: baseRisk,
+        lockEventId: lock.lockEventId,
+        ...(workspaceRoot === undefined ? {} : { workspaceRoot })
+      };
+      let result = existingResult === undefined
+        ? this.dependencies.events.createExecution(createExecutionInput)
+        : this.dependencies.events.markRunning(existingResult);
 
-    const started = this.dependencies.events.recordEvent(result.executionId, tool.name, "tool.started", {
-      input: redactedInput,
-      ...(resumedApproval === undefined ? {} : { resumedApprovalId: resumedApproval.id })
-    });
-    result = {
-      ...result,
-      riskLevel: baseRisk,
-      events: [...result.events, started]
-    };
+      if (!parseResult.success) {
+        return this.failWithSchemaError(result, tool.name, parseResult.error);
+      }
 
-    const approval = tool.requiresApproval?.(parseResult.data, {
-      workspace: this.dependencies.workspace,
-      ...(approvalToken === undefined ? {} : { approvalToken })
-    });
+      const started = this.dependencies.events.recordEvent(result.executionId, tool.name, "tool.started", {
+        input: redactedInput,
+        ...(resumedApproval === undefined ? {} : { resumedApprovalId: resumedApproval.id })
+      });
+      result = {
+        ...result,
+        riskLevel: baseRisk,
+        events: [...result.events, started]
+      };
 
-    if (approval !== undefined) {
-      if (approval.code === "TOOL_DENIED") {
-        const denied = this.dependencies.events.recordEvent(result.executionId, tool.name, "tool.failed", {
-          code: "TOOL_DENIED",
-          message: approval.reason
+      const approval = tool.requiresApproval?.(parseResult.data, {
+        workspace: this.dependencies.workspace,
+        ...(approvalToken === undefined ? {} : { approvalToken })
+      });
+
+      if (approval !== undefined) {
+        if (approval.code === "TOOL_DENIED") {
+          const denied = this.dependencies.events.recordEvent(result.executionId, tool.name, "tool.failed", {
+            code: "TOOL_DENIED",
+            message: approval.reason
+          });
+          return this.dependencies.events.updateExecution(
+            {
+              ...result,
+              events: [...result.events, denied]
+            },
+            "failed",
+            undefined,
+            "TOOL_DENIED",
+            approval.reason
+          );
+        }
+
+        const pendingApproval = this.dependencies.approvals.create({
+          executionId: result.executionId,
+          toolName: tool.name,
+          riskLevel: approval.riskLevel ?? baseRisk,
+          reason: approval.reason,
+          input: redactedInput
         });
+        const approvalEvent = this.dependencies.events.recordEvent(result.executionId, tool.name, "approval.required", {
+          approvalId: pendingApproval.id,
+          reason: pendingApproval.reason,
+          riskLevel: pendingApproval.riskLevel
+        });
+
         return this.dependencies.events.updateExecution(
           {
             ...result,
-            events: [...result.events, denied]
+            events: [...result.events, approvalEvent]
           },
-          "failed",
+          "waiting_for_approval",
           undefined,
-          "TOOL_DENIED",
-          approval.reason
+          "TOOL_APPROVAL_REQUIRED",
+          approval.reason,
+          undefined,
+          {
+            approvalId: pendingApproval.id
+          }
         );
       }
 
-      const pendingApproval = this.dependencies.approvals.create({
-        executionId: result.executionId,
-        toolName: tool.name,
-        riskLevel: approval.riskLevel ?? baseRisk,
-        reason: approval.reason,
-        input: redactedInput
-      });
-      const approvalEvent = this.dependencies.events.recordEvent(result.executionId, tool.name, "approval.required", {
-        approvalId: pendingApproval.id,
-        reason: pendingApproval.reason,
-        riskLevel: pendingApproval.riskLevel
-      });
-
-      return this.dependencies.events.updateExecution(
-        {
-          ...result,
-          events: [...result.events, approvalEvent]
-        },
-        "waiting_for_approval",
-        undefined,
-        "TOOL_APPROVAL_REQUIRED",
-        approval.reason,
-        undefined,
-        {
-          approvalId: pendingApproval.id
-        }
-      );
+      return await this.runWithRetries(tool, parseResult.data, request, result, secretValues);
+    } finally {
+      releaseLock(this.dependencies.locks, lock);
     }
-
-    return this.runWithRetries(tool, parseResult.data, request, result, secretValues);
   }
 
   private async runWithRetries(
@@ -345,6 +358,10 @@ export class ToolRuntime {
     await writeFile(outputPath, content, "utf8");
     return outputPath;
   }
+}
+
+function releaseLock(locks: LockController, lock: TaskLockHandle): void {
+  locks.release(lock);
 }
 
 function effectiveTimeout(request: ToolExecutionRequest, input: unknown): number {

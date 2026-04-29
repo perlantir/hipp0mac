@@ -5,7 +5,7 @@ Operator Dock is a Mac-first autonomous AI agent workspace. This repository star
 ## Structure
 
 - `apps/mac` - SwiftUI macOS app built with Swift Package Manager.
-- `apps/daemon` - local Node/TypeScript daemon with HTTP, WebSocket events, SQLite, and migrations.
+- `apps/daemon` - local Node/TypeScript daemon with HTTP, WebSocket events, SQLCipher SQLite, encrypted canonical event store, and migrations.
 - `packages/protocol` - shared zod schemas for task events, tool calls, approvals, artifacts, and model messages.
 - `packages/shared` - shared TypeScript utilities and default daemon connection settings.
 - `docs` - architecture notes, roadmap, design handoff, and local API docs.
@@ -14,8 +14,8 @@ Operator Dock is a Mac-first autonomous AI agent workspace. This repository star
 
 - macOS 14 or newer for the app shell.
 - Swift 6 or newer.
-- Node.js 25 or newer. The daemon uses Node's built-in `node:sqlite` module.
-- npm 11 or newer.
+- Node.js 24.x. The daemon uses `better-sqlite3-multiple-ciphers` for SQLCipher-compatible page encryption.
+- npm 10 or newer.
 
 ## Setup
 
@@ -71,7 +71,9 @@ Useful endpoints:
 Example task creation:
 
 ```bash
+TOKEN="$(security find-generic-password -s com.perlantir.operatordock.daemon -a daemon:httpBearerToken -w)"
 curl -s http://127.0.0.1:4768/v1/tasks \
+  -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"title":"Smoke test","prompt":"Create a test task from curl"}'
 ```
@@ -80,9 +82,10 @@ curl -s http://127.0.0.1:4768/v1/tasks \
 
 ```bash
 npm test
+npm run test:coverage -w @operator-dock/daemon
 ```
 
-This runs TypeScript package tests and SwiftPM tests for the macOS app core networking helpers.
+This runs TypeScript package tests and SwiftPM tests for the macOS app core networking and daemon supervision helpers.
 
 ## Product Context
 
@@ -93,6 +96,26 @@ This runs TypeScript package tests and SwiftPM tests for the macOS app core netw
 ## Provider Security
 
 The Mac app stores hosted provider API keys in macOS Keychain using service `com.perlantir.operatordock.providers`. The daemon reads credentials from the same local Keychain service when it needs to test or use a provider. Provider settings stored in SQLite contain only non-secret configuration such as enabled state, endpoint, default model, and role defaults.
+
+The daemon also generates local bearer auth and persistence keys in Keychain:
+
+- `com.perlantir.operatordock.daemon` / `daemon:httpBearerToken`
+- `com.perlantir.operatordock.persistence` / `OperatorDock.encryption.master`
+- `com.perlantir.operatordock.persistence` / `OperatorDock.signing.hmac`
+
+By default the HTTP and WebSocket server binds only to `127.0.0.1` or `::1`; network binding requires `OPERATOR_DOCK_ALLOW_NETWORK_BIND=1`.
+
+## Phase 5A Persistence
+
+Daemon-owned state lives under `~/Library/Application Support/OperatorDock/state/`, distinct from the user-selected workspace. The event store is encrypted, hash-chained, append-only, and canonical for execution history. SQLite is encrypted at the page level and serves user-facing metadata plus projections derived from canonical events.
+
+The Mac app supervises the Node daemon subprocess while the app is running. It starts the daemon from app-bundle configuration, respawns it after crash exits, and stops it when the app exits. No LaunchAgent is installed in Phase 5A.
+
+See:
+
+- `docs/phase-5a/README.md`
+- `docs/phase-5a/ARCHITECTURE.md`
+- `docs/phase-5a/RETROFIT_NOTES.md`
 
 ## Tool Runtime Safety
 

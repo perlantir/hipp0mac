@@ -6,6 +6,7 @@ import { ToolExecutionResponseSchema, WorkspaceResponseSchema } from "@operator-
 import { loadConfig } from "../src/config.js";
 import { buildApp } from "../src/server.js";
 import { EventBus } from "../src/websocket/eventBus.js";
+import { authHeaders, authStore, persistenceKeyManager } from "./harness.js";
 
 const tempRoots = new Set<string>();
 
@@ -24,6 +25,8 @@ function tempRoot(prefix: string): string {
 
 function testConfig(root: string) {
   return loadConfig({
+    HOME: root,
+    OPERATOR_DOCK_STATE_ROOT: join(root, "state"),
     OPERATOR_DOCK_DB_PATH: join(root, "operator-dock.sqlite"),
     OPERATOR_DOCK_MIGRATIONS_DIR: resolve("migrations")
   });
@@ -36,12 +39,15 @@ async function configuredApp(prefix = "operator-dock-workspace-") {
   const app = await buildApp({
     config: testConfig(root),
     eventBus,
+    authTokenStore: authStore(),
+    persistenceKeyManager: persistenceKeyManager(),
     logger: false
   });
 
   const response = await app.inject({
     method: "PUT",
     url: "/v1/workspace",
+    headers: authHeaders(),
     payload: {
       rootPath: workspaceRoot
     }
@@ -63,7 +69,8 @@ describe("workspace setup", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: "/v1/workspace"
+      url: "/v1/workspace",
+      headers: authHeaders()
     });
 
     await app.close();
@@ -81,6 +88,7 @@ describe("workspace setup", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/workspace/projects",
+      headers: authHeaders(),
       payload: {
         name: "Q3 Competitive Scan"
       }
@@ -103,6 +111,7 @@ describe("file tools", () => {
     const write = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/write",
+      headers: authHeaders(),
       payload: {
         path: "tasks/demo.md",
         content: "alpha\nbeta search-target\n"
@@ -113,6 +122,7 @@ describe("file tools", () => {
     const read = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/read",
+      headers: authHeaders(),
       payload: {
         path: "tasks/demo.md"
       }
@@ -125,6 +135,7 @@ describe("file tools", () => {
     const list = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/list",
+      headers: authHeaders(),
       payload: {
         path: "tasks"
       }
@@ -134,6 +145,7 @@ describe("file tools", () => {
     const search = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/search",
+      headers: authHeaders(),
       payload: {
         path: "tasks",
         query: "search-target"
@@ -151,6 +163,7 @@ describe("file tools", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/delete",
+      headers: authHeaders(),
       payload: {
         path: "/System",
         recursive: true
@@ -171,6 +184,7 @@ describe("file tools", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/write",
+      headers: authHeaders(),
       payload: {
         path: outsidePath,
         content: "outside"
@@ -193,6 +207,7 @@ describe("file tools", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/write",
+      headers: authHeaders(),
       payload: {
         path: "logs/run.txt",
         content: "hello"
@@ -215,6 +230,7 @@ describe("file tools", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/tools/fs/write",
+      headers: authHeaders(),
       payload: {
         path: outsidePath,
         content: "approved",

@@ -12,18 +12,47 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+DAEMON_ENTRY="$ROOT_DIR/apps/daemon/dist/index.js"
+DAEMON_CONFIG="$APP_RESOURCES/operator-dock-daemon.json"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 swift build --package-path "$MAC_DIR"
+npm run build -w @operator-dock/daemon
 BUILD_BINARY="$(swift build --package-path "$MAC_DIR" --show-bin-path)/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
+mkdir -p "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+
+DAEMON_ENTRY="$DAEMON_ENTRY" \
+DAEMON_CONFIG="$DAEMON_CONFIG" \
+ROOT_DIR="$ROOT_DIR" \
+node - <<'NODE'
+const { writeFileSync } = require("node:fs");
+const config = {
+  executablePath: "/usr/bin/env",
+  arguments: ["node", process.env.DAEMON_ENTRY],
+  environment: {
+    OPERATOR_DOCK_HOST: "127.0.0.1",
+    OPERATOR_DOCK_PORT: "4768",
+    OPERATOR_DOCK_MIGRATIONS_DIR: `${process.env.ROOT_DIR}/apps/daemon/migrations`
+  },
+  workingDirectory: process.env.ROOT_DIR,
+  respawnDelaySeconds: 0.5,
+  watchdogIntervalSeconds: 2,
+  healthTimeoutSeconds: 1,
+  startupGraceSeconds: 3,
+  healthFailureThreshold: 1,
+  healthURLString: "http://127.0.0.1:4768/health"
+};
+writeFileSync(process.env.DAEMON_CONFIG, JSON.stringify(config, null, 2));
+NODE
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -75,4 +104,3 @@ case "$MODE" in
     exit 2
     ;;
 esac
-
