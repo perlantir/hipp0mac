@@ -31,12 +31,14 @@ import { WorkspacePathSafety, type SafetyDecision } from "../../workspace/pathSa
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
 import type { LockController } from "../../persistence/lockController.js";
 import type { ToolEventStore } from "../runtime/toolEventStore.js";
+import type { IdempotencyStore } from "../runtime/idempotencyStore.js";
 import { FileOperationLogger } from "./fileOperationLogger.js";
 
 type FsOperation = "read" | "write" | "append" | "list" | "search" | "copy" | "move" | "delete";
 
 export interface FsToolExecutionContext {
   executionId: string;
+  idempotencyKey?: string;
   approvalToken?: string;
 }
 
@@ -56,7 +58,8 @@ export class FsToolService {
     private readonly workspaceService: WorkspaceService,
     private readonly events: ToolEventStore,
     private readonly fileLogger: FileOperationLogger,
-    private readonly locks: LockController
+    private readonly locks: LockController,
+    private readonly idempotency: IdempotencyStore
   ) {}
 
   async read(rawInput: unknown): Promise<ToolResult> {
@@ -130,7 +133,10 @@ export class FsToolService {
       path: safety.absolutePath,
       relativePath: safety.relativePath,
       content: sliced,
-      bytesRead: Buffer.byteLength(sliced, input.encoding)
+      contents: sliced,
+      bytesRead: Buffer.byteLength(sliced, input.encoding),
+      sizeBytes: Number(fileStat.size),
+      mtime: fileStat.mtime.toISOString()
     });
   }
 
@@ -138,20 +144,48 @@ export class FsToolService {
     const safety = this.safety().checkWrite(input.path, context.approvalToken ?? input.approvalToken);
     this.log("write", context.executionId, safety);
     assertSafe(safety);
+    const contents = input.contents ?? input.content ?? "";
+    const hash = this.idempotency.contentHash(contents);
+    if (context.idempotencyKey !== undefined) {
+      const previous = this.idempotency.lookup("fs.write", context.idempotencyKey);
+      if (previous !== undefined) {
+        if (previous.contentHash !== hash) {
+          throw new Error("Idempotency key was already used with different file contents.");
+        }
+
+        return {
+          ...(previous.output as Record<string, JsonValue>),
+          idempotent: true
+        };
+      }
+    }
 
     if (input.createDirs) {
       await mkdir(dirname(safety.absolutePath), { recursive: true });
     }
-    await writeFile(safety.absolutePath, input.content, {
+    await writeFile(safety.absolutePath, contents, {
+      mode: input.mode,
       encoding: "utf8",
       flag: input.overwrite ? "w" : "wx"
     });
 
-    return {
+    const output = {
       path: safety.absolutePath,
       relativePath: safety.relativePath,
-      bytesWritten: Buffer.byteLength(input.content, "utf8")
+      bytesWritten: Buffer.byteLength(contents, "utf8"),
+      sizeBytes: Buffer.byteLength(contents, "utf8"),
+      hash
     };
+    if (context.idempotencyKey !== undefined) {
+      this.idempotency.record({
+        toolName: "fs.write",
+        idempotencyKey: context.idempotencyKey,
+        contentHash: hash,
+        output
+      });
+    }
+
+    return output;
   }
 
   async appendOutput(input: FileAppendInput, context: FsToolExecutionContext): Promise<JsonValue> {
@@ -243,15 +277,33 @@ export class FsToolService {
     const safety = this.safety().checkDelete(input.path, context.approvalToken ?? input.approvalToken);
     this.log("delete", context.executionId, safety);
     assertSafe(safety);
+    if (context.idempotencyKey !== undefined) {
+      const previous = this.idempotency.lookup("fs.delete", context.idempotencyKey);
+      if (previous !== undefined) {
+        return {
+          ...(previous.output as Record<string, JsonValue>),
+          idempotent: true
+        };
+      }
+    }
 
     await rm(safety.absolutePath, {
       recursive: input.recursive,
       force: false
     });
-    return {
+    const output = {
       path: safety.absolutePath,
       relativePath: safety.relativePath
     };
+    if (context.idempotencyKey !== undefined) {
+      this.idempotency.record({
+        toolName: "fs.delete",
+        idempotencyKey: context.idempotencyKey,
+        output
+      });
+    }
+
+    return output;
   }
 
   private async run(
@@ -268,7 +320,6 @@ export class FsToolService {
       toolName,
       input,
       riskLevel,
-      lockEventId: lock.lockEventId,
       workspaceRoot: workspace.rootPath
     });
     let started = this.events.recordEvent(result.executionId, toolName, "tool.started", {

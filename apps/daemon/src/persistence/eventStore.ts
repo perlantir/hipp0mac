@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { JsonValue } from "@operator-dock/protocol";
 import { canonicalJson, sha256Hex } from "./canonicalJson.js";
@@ -67,6 +67,16 @@ export class EventStore {
     const events = this.readAll(taskId);
     const index = events.findIndex((event) => event.eventId === eventId);
     return index === -1 ? [] : events.slice(index + 1);
+  }
+
+  listTaskIds(): string[] {
+    if (!existsSync(this.paths.eventStoreRoot)) {
+      return [];
+    }
+
+    return readdirSync(this.paths.eventStoreRoot)
+      .filter((file) => file.endsWith(".log"))
+      .map((file) => file.slice(0, -4));
   }
 
   verify(taskId: string): EventStoreVerification {

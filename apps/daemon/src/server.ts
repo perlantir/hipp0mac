@@ -36,7 +36,13 @@ import { TaskRepository } from "./tasks/taskRepository.js";
 import { fsToolDefinitions } from "./tools/fs/fsToolDefinitions.js";
 import { FileOperationLogger } from "./tools/fs/fileOperationLogger.js";
 import { FsToolService } from "./tools/fs/fsToolService.js";
-import { shellRunInteractiveTool, shellRunTool } from "./tools/shell/shellTools.js";
+import { httpFetchTool } from "./tools/http/httpFetchTool.js";
+import { shellExecTool, shellRunInteractiveTool, shellRunTool } from "./tools/shell/shellTools.js";
+import { sleepWaitTool } from "./tools/sleep/sleepWaitTool.js";
+import { BudgetManager } from "./tools/runtime/budgetManager.js";
+import { IdempotencyStore } from "./tools/runtime/idempotencyStore.js";
+import { ToolManifestRegistry } from "./tools/runtime/manifestRegistry.js";
+import { SafetyGovernor } from "./tools/runtime/safetyGovernor.js";
 import { ToolApprovalStore } from "./tools/runtime/toolApprovalStore.js";
 import { ToolEventStore } from "./tools/runtime/toolEventStore.js";
 import { ToolRuntime } from "./tools/runtime/toolRuntime.js";
@@ -87,19 +93,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const workspace = new WorkspaceService(new WorkspaceSettingsRepository(database));
   const toolEvents = new ToolEventStore(database, eventBus, eventStore);
   const fileLogger = new FileOperationLogger(database);
-  const fsTools = new FsToolService(workspace, toolEvents, fileLogger, locks);
+  const idempotency = new IdempotencyStore(paths);
+  const fsTools = new FsToolService(workspace, toolEvents, fileLogger, locks, idempotency);
   const toolApprovals = new ToolApprovalStore(database);
+  const manifests = new ToolManifestRegistry(eventStore);
+  const safety = new SafetyGovernor(eventStore, workspace);
+  const budgets = new BudgetManager(eventStore);
   const toolRuntime = new ToolRuntime({
     workspace,
     events: toolEvents,
     approvals: toolApprovals,
-    locks
+    locks,
+    manifests,
+    safety,
+    budgets
   });
-  for (const tool of fsToolDefinitions(fsTools)) {
+  for (const tool of fsToolDefinitions(fsTools, idempotency)) {
     toolRuntime.register(tool);
   }
+  toolRuntime.register(shellExecTool());
   toolRuntime.register(shellRunTool());
   toolRuntime.register(shellRunInteractiveTool());
+  toolRuntime.register(httpFetchTool());
+  toolRuntime.register(sleepWaitTool());
+  await toolRuntime.reconcileAll();
   const app = Fastify({
     logger: fastifyLoggerOptions({
       enabled: options.logger ?? true,

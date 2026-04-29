@@ -22,6 +22,7 @@ export class OperatorDockPaths {
   readonly configRoot: string;
   readonly locksRoot: string;
   readonly logsRoot: string;
+  readonly idempotencyRoot: string;
   readonly databasePath: string;
 
   constructor(readonly root: string) {
@@ -33,6 +34,7 @@ export class OperatorDockPaths {
     this.configRoot = join(root, "config");
     this.locksRoot = join(root, "locks");
     this.logsRoot = join(root, "logs");
+    this.idempotencyRoot = join(root, "idempotency");
     this.databasePath = join(root, "operator-dock.sqlite");
   }
 
@@ -55,7 +57,8 @@ export class OperatorDockPaths {
       this.tasksRoot,
       this.configRoot,
       this.locksRoot,
-      this.logsRoot
+      this.logsRoot,
+      this.idempotencyRoot
     ]) {
       mkdirSync(directory, { recursive: true, mode: 0o700 });
     }

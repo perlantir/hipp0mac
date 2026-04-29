@@ -177,7 +177,7 @@ describe("file tools", () => {
     expect(result.error?.code).toBe("TOOL_DENIED");
   });
 
-  it("requires approval for outside-workspace writes", async () => {
+  it("denies outside-workspace writes before approval", async () => {
     const { app, root } = await configuredApp();
     const outsidePath = join(root, "outside.txt");
 
@@ -194,8 +194,8 @@ describe("file tools", () => {
     await app.close();
 
     const result = ToolExecutionResponseSchema.parse(response.json()).result;
-    expect(result.status).toBe("waiting_for_approval");
-    expect(result.error?.code).toBe("TOOL_APPROVAL_REQUIRED");
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("TOOL_DENIED");
     expect(existsSync(outsidePath)).toBe(false);
   });
 
@@ -223,7 +223,7 @@ describe("file tools", () => {
     expect(events).toContain("tool.completed");
   });
 
-  it("allows approved outside-workspace writes and records the file", async () => {
+  it("does not let approval tokens bypass manifest filesystem scope", async () => {
     const { app, root } = await configuredApp();
     const outsidePath = join(root, "approved-outside.txt");
 
@@ -240,7 +240,9 @@ describe("file tools", () => {
 
     await app.close();
 
-    expect(ToolExecutionResponseSchema.parse(response.json()).result.status).toBe("completed");
-    expect(readFileSync(outsidePath, "utf8")).toBe("approved");
+    const result = ToolExecutionResponseSchema.parse(response.json()).result;
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("TOOL_DENIED");
+    expect(existsSync(outsidePath)).toBe(false);
   });
 });

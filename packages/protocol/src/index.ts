@@ -28,6 +28,8 @@ export const TaskStatusSchema = z.enum([
   "queued",
   "running",
   "waiting_for_approval",
+  "paused",
+  "blocked",
   "completed",
   "failed",
   "cancelled"
@@ -329,15 +331,23 @@ export const FileReadOutputSchema = z.object({
   path: z.string(),
   relativePath: z.string(),
   content: z.string(),
-  bytesRead: z.number().int().nonnegative()
+  contents: z.string(),
+  bytesRead: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().nonnegative(),
+  mtime: isoDateTimeSchema
 });
 
 export const FileWriteInputSchema = z.object({
   path: z.string().trim().min(1),
-  content: z.string(),
+  content: z.string().optional(),
+  contents: z.string().optional(),
   createDirs: z.boolean().default(true),
   overwrite: z.boolean().default(true),
+  mode: z.number().int().min(0).max(0o777).optional(),
   approvalToken: z.string().optional()
+}).refine((input) => input.content !== undefined || input.contents !== undefined, {
+  message: "Either content or contents is required.",
+  path: ["contents"]
 });
 
 export const FileAppendInputSchema = z.object({
@@ -393,15 +403,108 @@ export const FileDeleteInputSchema = z.object({
 export const FileMutationOutputSchema = z.object({
   path: z.string(),
   relativePath: z.string(),
-  bytesWritten: z.number().int().nonnegative().optional()
+  bytesWritten: z.number().int().nonnegative().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  hash: z.string().optional(),
+  idempotent: z.boolean().optional()
 });
 
 export const ToolRiskLevelSchema = z.enum(["safe", "medium", "dangerous"]);
+
+export const PredicateSchema: z.ZodType<Predicate> = z.lazy(() =>
+  z.discriminatedUnion("op", [
+    z.object({ op: z.literal("always") }),
+    z.object({ op: z.literal("never") }),
+    z.object({ op: z.literal("and"), clauses: z.array(PredicateSchema) }),
+    z.object({ op: z.literal("or"), clauses: z.array(PredicateSchema) }),
+    z.object({ op: z.literal("not"), clause: PredicateSchema }),
+    z.object({ op: z.literal("match"), path: z.string().min(1), regex: z.string().min(1) }),
+    z.object({ op: z.literal("equals"), path: z.string().min(1), value: jsonValueSchema }),
+    z.object({ op: z.literal("in"), path: z.string().min(1), values: z.array(jsonValueSchema) }),
+    z.object({
+      op: z.literal("pathOutsideScope"),
+      inputPath: z.string().min(1),
+      scope: z.enum(["filesystem", "network"])
+    })
+  ])
+);
+
+export type Predicate =
+  | { op: "always" }
+  | { op: "never" }
+  | { op: "and"; clauses: Predicate[] }
+  | { op: "or"; clauses: Predicate[] }
+  | { op: "not"; clause: Predicate }
+  | { op: "match"; path: string; regex: string }
+  | { op: "equals"; path: string; value: JsonValue }
+  | { op: "in"; path: string; values: JsonValue[] }
+  | { op: "pathOutsideScope"; inputPath: string; scope: "filesystem" | "network" };
+
+export const ToolSideEffectClassSchema = z.enum([
+  "pure",
+  "read",
+  "write-idempotent",
+  "write-non-idempotent",
+  "external"
+]);
+
+export const ToolFilesystemScopeSchema = z.object({
+  mode: z.enum(["none", "workspace", "explicit"]),
+  paths: z.array(z.string()).default([])
+});
+
+export const ToolNetworkScopeSchema = z.object({
+  mode: z.enum(["none", "explicit"]),
+  hosts: z.array(z.string()).default([])
+});
+
+export const ToolTimeoutPolicySchema = z.object({
+  defaultMs: z.number().int().positive(),
+  maxMs: z.number().int().positive()
+}).refine((policy) => policy.defaultMs <= policy.maxMs, {
+  message: "defaultMs must be less than or equal to maxMs.",
+  path: ["defaultMs"]
+});
+
+export const ToolCapabilityManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(2000),
+  inputSchema: jsonObjectSchema,
+  outputSchema: jsonObjectSchema,
+  sideEffectClass: ToolSideEffectClassSchema,
+  supportsIdempotency: z.boolean(),
+  supportsDryRun: z.boolean(),
+  supportsStatusQuery: z.boolean(),
+  filesystemScope: ToolFilesystemScopeSchema,
+  networkScope: ToolNetworkScopeSchema,
+  approvalPolicy: PredicateSchema,
+  forbiddenInputPatterns: z.array(PredicateSchema),
+  timeoutPolicy: ToolTimeoutPolicySchema
+});
+
+export const SafetyDecisionValueSchema = z.enum(["allow", "approval_required", "deny"]);
+
+export const ToolCallCanonicalStatusSchema = z.enum(["ok", "error", "timeout", "cancelled"]);
+
+export const TaskBudgetLimitSchema = z.object({
+  used: z.number().nonnegative().default(0),
+  limit: z.number().nonnegative()
+});
+
+export const TaskBudgetLimitsSchema = z.object({
+  toolCalls: TaskBudgetLimitSchema,
+  wallClockMs: TaskBudgetLimitSchema,
+  costUsd: TaskBudgetLimitSchema,
+  bytesProcessed: TaskBudgetLimitSchema
+});
 
 export const ToolExecutionStatusSchema = z.enum([
   "pending",
   "running",
   "waiting_for_approval",
+  "blocked",
   "completed",
   "failed",
   "cancelled",
@@ -430,6 +533,13 @@ export const ToolReplayMetadataSchema = z.object({
   lockEventId: z.string().optional(),
   intendedEventId: z.string().optional(),
   resultEventId: z.string().optional(),
+  idempotencyKey: z.string().uuid().optional(),
+  safetyDecisionEventId: z.string().optional(),
+  safetyDecision: SafetyDecisionValueSchema.optional(),
+  durationMs: z.number().nonnegative().optional(),
+  bytesIn: z.number().int().nonnegative().optional(),
+  bytesOut: z.number().int().nonnegative().optional(),
+  pricingVersion: z.string().optional(),
   startedAt: isoDateTimeSchema,
   completedAt: isoDateTimeSchema.optional(),
   attempts: z.number().int().positive().default(1)
@@ -461,9 +571,12 @@ export const ToolExecutionRequestSchema = z.object({
   taskId: z.string().trim().min(1).optional(),
   toolName: z.string().trim().min(1),
   input: jsonObjectSchema,
-  timeoutMs: z.number().int().positive().max(120_000).optional(),
+  timeoutMs: z.number().int().positive().optional(),
   retry: z.number().int().nonnegative().max(3).default(0),
-  approvalToken: z.string().optional()
+  approvalToken: z.string().optional(),
+  idempotencyKey: z.string().uuid().optional(),
+  allowedNetworkHosts: z.array(z.string().min(1)).default([]),
+  budgetLimits: TaskBudgetLimitsSchema.optional()
 });
 
 export const ToolExecutionResponseSchema = z.object({
@@ -507,11 +620,46 @@ export const ShellRunInputSchema = z.object({
 export const ShellRunOutputSchema = z.object({
   exitCode: z.number().int().nullable(),
   stdout: z.string(),
-  stderr: z.string()
+  stderr: z.string(),
+  durationMs: z.number().nonnegative().optional()
 });
 
 export const ShellRunInteractiveInputSchema = ShellRunInputSchema.extend({
   stdin: z.string().default("")
+});
+
+export const ShellExecInputSchema = z.object({
+  command: z.string().trim().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().trim().min(1).optional(),
+  env: z.record(z.string()).default({})
+});
+
+export const ShellExecOutputSchema = z.object({
+  exitCode: z.number().int().nullable(),
+  stdout: z.string(),
+  stderr: z.string(),
+  durationMs: z.number().nonnegative()
+});
+
+export const HttpFetchInputSchema = z.object({
+  url: z.string().url(),
+  headers: z.record(z.string()).default({})
+});
+
+export const HttpFetchOutputSchema = z.object({
+  status: z.number().int().min(100).max(599),
+  headers: z.record(z.string()),
+  body: z.string(),
+  sizeBytes: z.number().int().nonnegative()
+});
+
+export const SleepWaitInputSchema = z.object({
+  durationMs: z.number().int().nonnegative().max(120_000)
+});
+
+export const SleepWaitOutputSchema = z.object({
+  durationMs: z.number().int().nonnegative()
 });
 
 const EventBaseSchema = z.object({
@@ -651,6 +799,11 @@ export type FileCopyInput = z.infer<typeof FileCopyInputSchema>;
 export type FileMoveInput = z.infer<typeof FileMoveInputSchema>;
 export type FileDeleteInput = z.infer<typeof FileDeleteInputSchema>;
 export type ToolRiskLevel = z.infer<typeof ToolRiskLevelSchema>;
+export type ToolSideEffectClass = z.infer<typeof ToolSideEffectClassSchema>;
+export type ToolCapabilityManifest = z.infer<typeof ToolCapabilityManifestSchema>;
+export type SafetyDecisionValue = z.infer<typeof SafetyDecisionValueSchema>;
+export type ToolCallCanonicalStatus = z.infer<typeof ToolCallCanonicalStatusSchema>;
+export type TaskBudgetLimits = z.infer<typeof TaskBudgetLimitsSchema>;
 export type ToolExecutionStatus = z.infer<typeof ToolExecutionStatusSchema>;
 export type ToolEventType = z.infer<typeof ToolEventTypeSchema>;
 export type ToolError = z.infer<typeof ToolErrorSchema>;
@@ -661,3 +814,9 @@ export type ToolApproval = z.infer<typeof ToolApprovalSchema>;
 export type ShellRunInput = z.infer<typeof ShellRunInputSchema>;
 export type ShellRunOutput = z.infer<typeof ShellRunOutputSchema>;
 export type ShellRunInteractiveInput = z.infer<typeof ShellRunInteractiveInputSchema>;
+export type ShellExecInput = z.infer<typeof ShellExecInputSchema>;
+export type ShellExecOutput = z.infer<typeof ShellExecOutputSchema>;
+export type HttpFetchInput = z.infer<typeof HttpFetchInputSchema>;
+export type HttpFetchOutput = z.infer<typeof HttpFetchOutputSchema>;
+export type SleepWaitInput = z.infer<typeof SleepWaitInputSchema>;
+export type SleepWaitOutput = z.infer<typeof SleepWaitOutputSchema>;

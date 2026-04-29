@@ -5,11 +5,13 @@ import {
   ToolResultSchema,
   type JsonValue,
   type OperatorEvent,
+  type SafetyDecisionValue,
   type ToolEventRecord,
   type ToolEventType,
   type ToolExecutionStatus,
   type ToolResult,
-  type ToolRiskLevel
+  type ToolRiskLevel,
+  type ToolCapabilityManifest
 } from "@operator-dock/protocol";
 import type { EventStore } from "../../persistence/eventStore.js";
 import { canonicalJson } from "../../persistence/canonicalJson.js";
@@ -20,8 +22,22 @@ export interface CreateExecutionInput {
   toolName: string;
   input: Record<string, JsonValue>;
   riskLevel: ToolRiskLevel;
-  lockEventId?: string;
   workspaceRoot?: string;
+  idempotencyKey?: string;
+}
+
+export interface StartExecutionInput {
+  manifest: ToolCapabilityManifest;
+  resolvedInput: Record<string, JsonValue>;
+  safetyDecision: {
+    eventId: string;
+    decision: SafetyDecisionValue;
+  };
+  scopeChecks: JsonValue;
+  timeoutMs: number;
+  lockEventId: string;
+  idempotencyKey?: string;
+  approvalEventId?: string;
 }
 
 interface ToolExecutionRow {
@@ -57,21 +73,17 @@ export class ToolEventStore {
   ) {}
 
   createExecution(input: CreateExecutionInput): ToolResult {
+    return this.createPendingExecution(input, "running");
+  }
+
+  createPendingExecution(input: CreateExecutionInput, status: ToolExecutionStatus = "pending"): ToolResult {
     const now = new Date().toISOString();
     const executionId = randomUUID();
-    const intendedEventId = this.eventStore.append(input.taskId, "tool_call_intended", {
-      executionId,
-      toolName: input.toolName,
-      input: input.input,
-      riskLevel: input.riskLevel,
-      ...(input.lockEventId === undefined ? {} : { lockEventId: input.lockEventId })
-    });
     const replay = {
       taskId: input.taskId,
       inputHash: hashJson(input.input),
       workspaceRoot: input.workspaceRoot,
-      ...(input.lockEventId === undefined ? {} : { lockEventId: input.lockEventId }),
-      intendedEventId,
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       startedAt: now,
       attempts: 1
     };
@@ -87,23 +99,20 @@ export class ToolEventStore {
           replay_json,
           legacy,
           task_id,
-          intended_event_id,
           lock_event_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
       `)
       .run(
         executionId,
         input.toolName,
-        "running",
+        status,
         input.riskLevel,
         JSON.stringify(input.input),
         JSON.stringify(replay),
         0,
         input.taskId,
-        intendedEventId,
-        input.lockEventId ?? null,
         now,
         now
       );
@@ -111,12 +120,67 @@ export class ToolEventStore {
     return {
       executionId,
       toolName: input.toolName,
-      status: "running",
+      status,
       riskLevel: input.riskLevel,
       ok: false,
       events: [],
       replay
     };
+  }
+
+  startExecution(result: ToolResult, input: StartExecutionInput): ToolResult {
+    const intendedEventId = this.eventStore.append(result.replay.taskId ?? "tool-runtime", "tool_call_intended", {
+      executionId: result.executionId,
+      toolName: input.manifest.name,
+      toolVersion: input.manifest.version,
+      idempotencyKey: input.idempotencyKey ?? null,
+      resolvedInput: input.resolvedInput,
+      safetyDecision: {
+        eventId: input.safetyDecision.eventId,
+        decision: input.safetyDecision.decision
+      },
+      ...(input.approvalEventId === undefined ? {} : { approvalEventId: input.approvalEventId }),
+      scopeChecks: input.scopeChecks,
+      timeoutMs: input.timeoutMs,
+      lockEventId: input.lockEventId
+    });
+    const replay = {
+      ...result.replay,
+      lockEventId: input.lockEventId,
+      intendedEventId,
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey })
+    };
+
+    this.database
+      .prepare(`
+        UPDATE tool_executions
+        SET
+          status = 'running',
+          replay_json = ?,
+          intended_event_id = ?,
+          lock_event_id = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(JSON.stringify(replay), intendedEventId, input.lockEventId, new Date().toISOString(), result.executionId);
+
+    return {
+      ...result,
+      status: "running",
+      replay
+    };
+  }
+
+  appendCanonical(taskId: string, eventType: string, payload: Record<string, JsonValue> = {}): string {
+    return this.eventStore.append(taskId, eventType, payload);
+  }
+
+  canonicalEvents(taskId: string) {
+    return this.eventStore.readAll(taskId);
+  }
+
+  canonicalTaskIds(): string[] {
+    return this.eventStore.listTaskIds();
   }
 
   getExecution(executionId: string): ToolResult | undefined {
@@ -246,16 +310,30 @@ export class ToolEventStore {
       || status === "cancelled"
       || status === "timed_out";
     const taskId = typeof result.replay.taskId === "string" ? result.replay.taskId : undefined;
-    const resultEventId = terminal && taskId !== undefined
+    const canonicalStatus = canonicalStatusFor(status);
+    const bytesIn = numericReplay(result.replay.bytesIn);
+    const bytesOut = numericReplay(result.replay.bytesOut);
+    const durationMs = numericReplay(result.replay.durationMs);
+    const pricingVersion = typeof result.replay.pricingVersion === "string"
+      ? result.replay.pricingVersion
+      : undefined;
+    const hasIntended = typeof result.replay.intendedEventId === "string";
+    const resultEventId = terminal && taskId !== undefined && hasIntended
       ? this.eventStore.append(taskId, "tool_call_result", {
+        intendedEventId: result.replay.intendedEventId as string,
         executionId: result.executionId,
         toolName: result.toolName,
-        status,
+        status: canonicalStatus,
         ok: status === "completed",
         ...(output === undefined ? {} : { output }),
         ...(errorCode === undefined ? {} : { errorCode }),
         ...(errorMessage === undefined ? {} : { errorMessage }),
-        ...(rawOutputRef === undefined ? {} : { rawOutputRef })
+        ...(rawOutputRef === undefined ? {} : { rawOutputRef }),
+        durationMs,
+        bytesIn,
+        bytesOut,
+        costUsd: 0,
+        ...(pricingVersion === undefined ? {} : { pricingVersion })
       })
       : undefined;
     const replay = terminal
@@ -365,8 +443,41 @@ export class ToolEventStore {
       replay
     };
   }
+
+  withReplay(result: ToolResult, replayPatch: Record<string, JsonValue>): ToolResult {
+    const replay = {
+      ...result.replay,
+      ...replayPatch
+    };
+
+    this.database
+      .prepare("UPDATE tool_executions SET replay_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(replay), new Date().toISOString(), result.executionId);
+
+    return {
+      ...result,
+      replay
+    };
+  }
 }
 
 function hashJson(value: Record<string, JsonValue>): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function canonicalStatusFor(status: ToolExecutionStatus): "ok" | "error" | "timeout" | "cancelled" {
+  switch (status) {
+  case "completed":
+    return "ok";
+  case "timed_out":
+    return "timeout";
+  case "cancelled":
+    return "cancelled";
+  default:
+    return "error";
+  }
+}
+
+function numericReplay(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

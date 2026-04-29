@@ -34,6 +34,18 @@ export async function registerToolRuntimeRoutes(
     return ToolExecutionResponseSchema.parse({ result });
   });
 
+  app.post("/v1/tasks/:taskId/pause", async (request) => {
+    const params = request.params as { taskId: string };
+    await dependencies.runtime.pause(params.taskId);
+    return { ok: true };
+  });
+
+  app.post("/v1/tasks/:taskId/kill", async (request) => {
+    const params = request.params as { taskId: string };
+    dependencies.runtime.kill(params.taskId);
+    return { ok: true };
+  });
+
   app.get("/v1/tools/approvals", async () => {
     return ToolApprovalListResponseSchema.parse({
       approvals: dependencies.approvals.listPending()

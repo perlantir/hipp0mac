@@ -71,6 +71,14 @@ export class WorkspacePathSafety {
 
   checkDelete(inputPath: string, approvalToken?: string): SafetyDecision {
     const resolution = this.resolvePath(inputPath);
+    if (resolution.insideWorkspace) {
+      return {
+        ...resolution,
+        allowed: true,
+        approvalRequired: false
+      };
+    }
+
     if (isSystemDirectory(resolution.absolutePath)) {
       return {
         ...resolution,
@@ -80,7 +88,7 @@ export class WorkspacePathSafety {
       };
     }
 
-    if (resolution.insideWorkspace || hasApproval(approvalToken)) {
+    if (hasApproval(approvalToken)) {
       return {
         ...resolution,
         allowed: true,
@@ -108,4 +116,3 @@ function isSystemDirectory(path: string): boolean {
 function inputPathIsAbsolute(path: string): boolean {
   return path.startsWith(sep);
 }
-

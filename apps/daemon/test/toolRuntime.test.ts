@@ -159,7 +159,7 @@ describe("tool runtime safety governor", () => {
     expect(readFileSync(outsidePath, "utf8")).toBe("approved");
   });
 
-  it("cancels a running shell execution", async () => {
+  it("cancels a running pure tool execution", async () => {
     const { app, eventBus } = await configuredApp();
     const events: unknown[] = [];
     eventBus.subscribe((event) => events.push(event));
@@ -169,10 +169,9 @@ describe("tool runtime safety governor", () => {
       url: "/v1/tools/execute",
       headers: authHeaders(),
       payload: {
-        toolName: "shell.run",
+        toolName: "sleep.wait",
         input: {
-          command: "sleep 5",
-          timeoutMs: 10_000
+          durationMs: 5_000
         }
       }
     });
@@ -194,7 +193,7 @@ describe("tool runtime safety governor", () => {
     expect(result.error?.code).toBe("TOOL_CANCELLED");
   });
 
-  it("times out shell execution", async () => {
+  it("times out pure tool execution", async () => {
     const { app } = await configuredApp();
 
     const response = await app.inject({
@@ -202,10 +201,10 @@ describe("tool runtime safety governor", () => {
       url: "/v1/tools/execute",
       headers: authHeaders(),
       payload: {
-        toolName: "shell.run",
+        toolName: "sleep.wait",
         timeoutMs: 50,
         input: {
-          command: "sleep 1"
+          durationMs: 1_000
         }
       }
     });
@@ -220,7 +219,7 @@ describe("tool runtime safety governor", () => {
   it("redacts secrets from shell output and raw output refs", async () => {
     const { app } = await configuredApp();
 
-    const response = await app.inject({
+    const pendingResponse = await app.inject({
       method: "POST",
       url: "/v1/tools/execute",
       headers: authHeaders(),
@@ -232,6 +231,18 @@ describe("tool runtime safety governor", () => {
             API_TOKEN: "super-secret-token"
           }
         }
+      }
+    });
+    const pending = ToolExecutionResponseSchema.parse(pendingResponse.json()).result;
+    const approvalId = pending.error?.details?.approvalId;
+    expect(typeof approvalId).toBe("string");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/tools/approvals/${approvalId}/resolve`,
+      headers: authHeaders(),
+      payload: {
+        approved: true
       }
     });
 
@@ -281,12 +292,13 @@ describe("tool runtime safety governor", () => {
     const eventStore = new EventStore(new OperatorDockPaths(join(root, "state")), keys);
     const canonicalEvents = eventStore.readAll("task-runtime-lock");
     expect(canonicalEvents.map((event) => event.eventType)).toEqual([
+      "safety_decision",
       "lock_acquired",
       "tool_call_intended",
       "tool_call_result",
       "lock_released"
     ]);
-    expect(canonicalEvents[0]!.eventId).toBe(result.replay.lockEventId);
+    expect(canonicalEvents[1]!.eventId).toBe(result.replay.lockEventId);
 
     const database = openDatabase({
       databasePath: dbPath,

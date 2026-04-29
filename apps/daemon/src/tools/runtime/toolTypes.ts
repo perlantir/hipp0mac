@@ -1,5 +1,5 @@
 import type { ZodTypeAny } from "zod";
-import type { JsonValue, ToolRiskLevel } from "@operator-dock/protocol";
+import type { JsonValue, ToolCapabilityManifest, ToolRiskLevel } from "@operator-dock/protocol";
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
 
 export type ToolErrorCode =
@@ -23,20 +23,29 @@ export interface ToolExecutionContext {
   executionId: string;
   workspace: WorkspaceService;
   signal: AbortSignal;
+  idempotencyKey?: string;
   approvalToken?: string;
   setRawOutputRef(rawOutputRef: string): void;
   writeRawOutput(content: string, extension?: string): Promise<string>;
 }
 
+export interface ToolStatusQueryResult {
+  applied: boolean;
+  output?: JsonValue;
+}
+
 export interface ToolDefinition<Input, Output> {
   readonly name: string;
+  readonly version?: string;
   readonly description: string;
   readonly riskLevel: ToolRiskLevel;
+  readonly manifest: ToolCapabilityManifest;
   readonly inputSchema: ZodTypeAny;
   readonly outputSchema: ZodTypeAny;
   classifyRisk?(input: Input, context: Pick<ToolExecutionContext, "workspace">): ToolRiskLevel;
   requiresApproval?(input: Input, context: Pick<ToolExecutionContext, "workspace" | "approvalToken">): ToolApprovalRequirement | undefined;
   execute(input: Input, context: ToolExecutionContext): Promise<Output>;
+  statusQuery?(idempotencyKey: string): Promise<ToolStatusQueryResult>;
 }
 
 export class ToolRuntimeError extends Error {
