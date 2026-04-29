@@ -2,7 +2,7 @@
 
 Date: 2026-04-29<br>
 Branch: `phase-5a/node-persistence`<br>
-Implementation verification commit: `d08c92251b60c39452682eec44a21ff147551e8d`
+Implementation verification commit: `718e16054b33b24074f185a7217579a981585a2f`
 
 Note: this sign-off document was updated after the three GitHub Actions attempts completed so it could record their immutable URLs. The linked attempts verify the pushed implementation commit above.
 
@@ -14,7 +14,7 @@ Swift helper work was preserved on `exploration/swift-helper` and is not part of
 
 | Criterion | Status | Evidence |
 | --- | --- | --- |
-| Every test passes in CI on three consecutive runs | Passed in GitHub Actions | Workflow `Phase 5A Node Persistence` passed three consecutive GitHub Actions attempts against pushed commit `d08c92251b60c39452682eec44a21ff147551e8d`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/3). Each attempt ran install, `npm run typecheck`, `npm test`, and `npm run test:coverage -w @operator-dock/daemon` on GitHub macOS CI. |
+| Every test passes in CI on three consecutive runs | Passed in GitHub Actions | Workflow `Phase 5A Node Persistence` passed three consecutive GitHub Actions attempts against pushed commit `718e16054b33b24074f185a7217579a981585a2f`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/3). Each attempt ran install, `npm run typecheck`, `npm test`, and `npm run test:coverage -w @operator-dock/daemon` on GitHub macOS CI. |
 | Manual crash test | Passed | No LaunchAgent was added. The Mac app now owns minimal subprocess supervision: spawn on launch, termination callback as fast path, process liveness + `/health` watchdog every 2 seconds, and respawn after crash. `swift test --package-path apps/mac --filter DaemonSupervisorTests` starts the real Node daemon, creates a task, verifies supervisor-issued SIGKILL recovery, verifies separate `/bin/kill -9` recovery, waits for `/health`, and verifies the task still lists after recovery. Manual app verification also passed on the final code: daemon PID `79307` was killed from an external shell with `/bin/kill -9`; after 5 seconds `pgrep -fl 'apps/daemon/dist/index.js'` showed replacement PID `79484`. |
 | Manual security audit | Passed for Node implementation | Tests assert raw event logs contain no plaintext payloads, SQLCipher DB pages do not contain task needles, wrong SQLite key fails, and Fastify logs redact synthetic API keys/tokens. |
 | Schema migration framework v0 -> v1 | Passed | `apps/daemon/test/persistence.test.ts` covers synthetic `v0 -> v1`, idempotent migration output, and `schema_migration_applied` event emission. |
@@ -25,13 +25,13 @@ Swift helper work was preserved on `exploration/swift-helper` and is not part of
 ### GitHub Actions
 
 - Branch pushed to `origin/phase-5a/node-persistence`.
-- Verification commit: `d08c92251b60c39452682eec44a21ff147551e8d`.
+- Verification commit: `718e16054b33b24074f185a7217579a981585a2f`.
 - Workflow: `Phase 5A Node Persistence`.
-- Run: https://github.com/perlantir/hipp0mac/actions/runs/25136937451.
+- Run: https://github.com/perlantir/hipp0mac/actions/runs/25137242439.
 - Consecutive passing attempts:
-  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/1
-  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/2
-  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25136937451/attempts/3
+  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/1
+  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/2
+  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25137242439/attempts/3
 - Each attempt passed:
   - `npm run typecheck`
   - `npm test`
@@ -39,8 +39,9 @@ Swift helper work was preserved on `exploration/swift-helper` and is not part of
 
 Earlier CI failures are recorded and fixed:
 
-- https://github.com/perlantir/hipp0mac/actions/runs/25136840645 failed because the initial workflow used `macos-14`, whose Swift 5.10 toolchain could not build the Swift tools 6 package.
-- https://github.com/perlantir/hipp0mac/actions/runs/25136882182 failed because GitHub's Swift toolchain rejected `Swift.Task`; commit `d08c92251b60c39452682eec44a21ff147551e8d` changed this to `_Concurrency.Task`.
+- https://github.com/perlantir/hipp0mac/actions/runs/25136840645 failed because the initial workflow used `macos-14`, whose Swift 5.10 toolchain could not build the Swift tools 6 package. Commit `9c0c50fd652be093c2fff30028f5e8b25cf8c413` moved Phase 5A CI to `macos-15`.
+- https://github.com/perlantir/hipp0mac/actions/runs/25136882182 failed because GitHub's Swift toolchain rejected `Swift.Task`. Commit `d08c92251b60c39452682eec44a21ff147551e8d` changed this to `_Concurrency.Task`.
+- https://github.com/perlantir/hipp0mac/actions/runs/25137158681 failed because the real-daemon supervisor test used a 5-second health wait that was too tight on a fresh GitHub runner. Commit `718e16054b33b24074f185a7217579a981585a2f` hardened the readiness wait and failure reporting.
 
 ### Local Verification
 
