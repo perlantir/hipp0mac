@@ -106,6 +106,19 @@ What the original Phase 5A test missed:
   and recovery logs during the incident.
 - A fatal surfaced UI state after repeated failures; the app kept running
   while the daemon failed repeatedly.
+- The dev app bundle JSON generated before Phase 5D did not include the
+  new non-optional `DaemonSupervisor.Configuration` fields. Once the
+  hardened supervisor fields were added, old JSON could fail to decode and
+  the app could fall back to environment-derived configuration instead of
+  the bundled daemon config.
+- The real-daemon supervisor tests used the production default daemon log
+  path unless each test supplied an override, which polluted
+  `~/Library/Logs/OperatorDock/daemon.log` and made test evidence harder to
+  separate from user-run daemon evidence.
+- `script/build_and_run.sh` rebuilt only the daemon workspace. That left
+  `packages/protocol/dist` and `packages/shared/dist` stale in local app
+  launches, allowing the rebuilt daemon server to use a health schema that
+  did not match the dist package loaded at runtime.
 
 Correction landed in Phase 5D as a Phase 5A amendment:
 
@@ -119,6 +132,15 @@ Correction landed in Phase 5D as a Phase 5A amendment:
   Settings diagnostics.
 - New Swift tests cover log capture/rotation and bounded restart behavior
   with fatal error notification.
+- `DaemonSupervisor.Configuration` now decodes old bundle JSON
+  backward-compatibly, using the hardened Phase 5D defaults for missing
+  fields.
+- `script/build_and_run.sh` now writes the full hardened daemon config,
+  rebuilds protocol, shared, and daemon workspaces together, and performs a
+  launch smoke check that requires `/health` on `127.0.0.1:4768` to return
+  HTTP 200 with build metadata matching the freshly built daemon.
+- Real-daemon supervisor tests now pass test-specific `logFilePath` values
+  so test subprocess stdout/stderr stays out of the production daemon log.
 
 This amendment does not mark the Phase 5D real-daemon audit complete. The
 human owner still needs to rerun the Phase 5D manual audit scenarios against
