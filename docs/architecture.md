@@ -103,6 +103,14 @@ Write and external tools receive an idempotency key generated before
 Write/external replay returns recorded or synthesized results and does not
 blindly double-execute side effects.
 
+Filesystem mutation idempotency is durable in daemon state. `fs.append`
+uses per-file append logs under `state/tool-tombstones/fs.append/`.
+`fs.copy` and `fs.move` use tombstone logs at
+`state/tool-tombstones/fs.copy.log` and
+`state/tool-tombstones/fs.move.log`. These logs let status queries
+synthesize results after a crash when the side effect applied but
+`tool_call_result` was not appended.
+
 The Safety Governor evaluates predicates mechanically: forbidden patterns,
 scope checks, approval policy, then allow. Scope violations deny. Every
 safety decision is recorded with an input digest rather than raw input.
@@ -116,5 +124,6 @@ The Phase 5B starter tools are:
 - `http.fetch`
 - `sleep.wait`
 
-Legacy `shell.run` and `shell.runInteractive` remain registered through
-the manifest-backed runtime for compatibility.
+Legacy `fs.append`, `fs.copy`, `fs.move`, `shell.run`, and
+`shell.runInteractive` remain registered through the manifest-backed
+runtime for compatibility.

@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { appendFile, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -31,7 +31,8 @@ import { WorkspacePathSafety, type SafetyDecision } from "../../workspace/pathSa
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
 import type { LockController } from "../../persistence/lockController.js";
 import type { ToolEventStore } from "../runtime/toolEventStore.js";
-import type { IdempotencyStore } from "../runtime/idempotencyStore.js";
+import type { FileMutationRecord, IdempotencyStore } from "../runtime/idempotencyStore.js";
+import type { ToolStatusQueryResult } from "../runtime/toolTypes.js";
 import { FileOperationLogger } from "./fileOperationLogger.js";
 
 type FsOperation = "read" | "write" | "append" | "list" | "search" | "copy" | "move" | "delete";
@@ -192,17 +193,57 @@ export class FsToolService {
     const safety = this.safety().checkWrite(input.path, context.approvalToken ?? input.approvalToken);
     this.log("append", context.executionId, safety);
     assertSafe(safety);
+    const contentBuffer = Buffer.from(input.content, "utf8");
+    const contentHash = this.idempotency.bufferHash(contentBuffer);
+    if (context.idempotencyKey !== undefined) {
+      const previous = this.idempotency.lookupFileMutation("fs.append", context.idempotencyKey);
+      if (previous !== undefined) {
+        this.assertFileMutationReplay(previous, "fs.append", safety.absolutePath, contentHash);
+        const output = await this.applyPreparedAppend(previous, input.content);
+        return {
+          ...(output as Record<string, JsonValue>),
+          idempotent: true
+        };
+      }
+    }
 
     if (input.createDirs) {
       await mkdir(dirname(safety.absolutePath), { recursive: true });
     }
-    await appendFile(safety.absolutePath, input.content, "utf8");
+    if (context.idempotencyKey === undefined) {
+      await writeFile(safety.absolutePath, input.content, { encoding: "utf8", flag: "a" });
+      return {
+        path: safety.absolutePath,
+        relativePath: safety.relativePath,
+        bytesWritten: Buffer.byteLength(input.content, "utf8")
+      };
+    }
 
-    return {
+    const before = await this.readFileOrEmpty(safety.absolutePath);
+    const after = Buffer.concat([before, contentBuffer]);
+    const output = {
       path: safety.absolutePath,
       relativePath: safety.relativePath,
-      bytesWritten: Buffer.byteLength(input.content, "utf8")
+      bytesWritten: contentBuffer.byteLength,
+      sizeBytes: after.byteLength,
+      hash: this.idempotency.bufferHash(after)
     };
+    const record = this.idempotency.prepareFileMutation({
+      toolName: "fs.append",
+      idempotencyKey: context.idempotencyKey,
+      targetPath: safety.absolutePath,
+      relativePath: safety.relativePath,
+      inputDigest: this.idempotency.contentHash(JSON.stringify({
+        path: input.path,
+        createDirs: input.createDirs
+      })),
+      contentHash,
+      beforeHash: this.idempotency.bufferHash(before),
+      afterHash: output.hash,
+      output
+    });
+
+    return this.applyPreparedAppend(record, input.content);
   }
 
   async listOutput(input: FileListInput, context: FsToolExecutionContext): Promise<JsonValue> {
@@ -240,13 +281,61 @@ export class FsToolService {
     const to = this.safety().checkWrite(input.to, context.approvalToken ?? input.approvalToken);
     this.log("copy", context.executionId, to, from.absolutePath);
     assertSafe(to);
+    if (context.idempotencyKey !== undefined) {
+      const previous = this.idempotency.lookupFileMutation("fs.copy", context.idempotencyKey);
+      if (previous !== undefined) {
+        this.assertFileMutationReplay(previous, "fs.copy", to.absolutePath, undefined, from.absolutePath);
+        const output = await this.applyPreparedCopy(previous, input.overwrite);
+        return {
+          ...(output as Record<string, JsonValue>),
+          idempotent: true
+        };
+      }
+    }
 
     await mkdir(dirname(to.absolutePath), { recursive: true });
-    await copyFile(from.absolutePath, to.absolutePath, input.overwrite ? 0 : constants.COPYFILE_EXCL);
-    return {
+    if (context.idempotencyKey === undefined) {
+      if (!input.overwrite && await this.fileExists(to.absolutePath)) {
+        throw new Error("Destination already exists.");
+      }
+      const source = await readFile(from.absolutePath);
+      await this.atomicWriteBuffer(to.absolutePath, source);
+      return {
+        path: to.absolutePath,
+        relativePath: to.relativePath,
+        sizeBytes: source.byteLength,
+        hash: this.idempotency.bufferHash(source)
+      };
+    }
+
+    if (!input.overwrite && await this.fileExists(to.absolutePath)) {
+      throw new Error("Destination already exists.");
+    }
+    const source = await readFile(from.absolutePath);
+    const sourceHash = this.idempotency.bufferHash(source);
+    const output = {
       path: to.absolutePath,
-      relativePath: to.relativePath
+      relativePath: to.relativePath,
+      sizeBytes: source.byteLength,
+      hash: sourceHash
     };
+    const record = this.idempotency.prepareFileMutation({
+      toolName: "fs.copy",
+      idempotencyKey: context.idempotencyKey,
+      sourcePath: from.absolutePath,
+      targetPath: to.absolutePath,
+      relativePath: to.relativePath,
+      inputDigest: this.idempotency.contentHash(JSON.stringify({
+        from: input.from,
+        to: input.to,
+        overwrite: input.overwrite
+      })),
+      contentHash: sourceHash,
+      afterHash: sourceHash,
+      output
+    });
+
+    return this.applyPreparedCopy(record, input.overwrite);
   }
 
   async moveOutput(input: FileMoveInput, context: FsToolExecutionContext): Promise<JsonValue> {
@@ -256,6 +345,17 @@ export class FsToolService {
     this.log("move", context.executionId, to, from.absolutePath);
     assertSafe(from);
     assertSafe(to);
+    if (context.idempotencyKey !== undefined) {
+      const previous = this.idempotency.lookupFileMutation("fs.move", context.idempotencyKey);
+      if (previous !== undefined) {
+        this.assertFileMutationReplay(previous, "fs.move", to.absolutePath, undefined, from.absolutePath);
+        const output = await this.applyPreparedMove(previous, input.overwrite);
+        return {
+          ...(output as Record<string, JsonValue>),
+          idempotent: true
+        };
+      }
+    }
 
     await mkdir(dirname(to.absolutePath), { recursive: true });
     if (!input.overwrite) {
@@ -266,11 +366,221 @@ export class FsToolService {
         () => undefined
       );
     }
-    await rename(from.absolutePath, to.absolutePath);
-    return {
+    if (context.idempotencyKey === undefined) {
+      const source = await readFile(from.absolutePath);
+      await rename(from.absolutePath, to.absolutePath);
+      return {
+        path: to.absolutePath,
+        relativePath: to.relativePath,
+        sizeBytes: source.byteLength,
+        hash: this.idempotency.bufferHash(source)
+      };
+    }
+
+    const source = await readFile(from.absolutePath);
+    const sourceHash = this.idempotency.bufferHash(source);
+    const output = {
       path: to.absolutePath,
-      relativePath: to.relativePath
+      relativePath: to.relativePath,
+      sizeBytes: source.byteLength,
+      hash: sourceHash
     };
+    const record = this.idempotency.prepareFileMutation({
+      toolName: "fs.move",
+      idempotencyKey: context.idempotencyKey,
+      sourcePath: from.absolutePath,
+      targetPath: to.absolutePath,
+      relativePath: to.relativePath,
+      inputDigest: this.idempotency.contentHash(JSON.stringify({
+        from: input.from,
+        to: input.to,
+        overwrite: input.overwrite
+      })),
+      contentHash: sourceHash,
+      afterHash: sourceHash,
+      output
+    });
+
+    return this.applyPreparedMove(record, input.overwrite);
+  }
+
+  async appendStatus(idempotencyKey: string): Promise<ToolStatusQueryResult> {
+    const record = this.idempotency.lookupFileMutation("fs.append", idempotencyKey);
+    if (record === undefined) {
+      return { applied: false };
+    }
+
+    return this.fileMutationStatus(record);
+  }
+
+  async copyStatus(idempotencyKey: string): Promise<ToolStatusQueryResult> {
+    const record = this.idempotency.lookupFileMutation("fs.copy", idempotencyKey);
+    if (record === undefined) {
+      return { applied: false };
+    }
+
+    return this.fileMutationStatus(record);
+  }
+
+  async moveStatus(idempotencyKey: string): Promise<ToolStatusQueryResult> {
+    const record = this.idempotency.lookupFileMutation("fs.move", idempotencyKey);
+    if (record === undefined) {
+      return { applied: false };
+    }
+
+    return this.fileMutationStatus(record, { requireSourceRemoved: true });
+  }
+
+  private async applyPreparedAppend(record: FileMutationRecord, content: string): Promise<JsonValue> {
+    const status = await this.fileMutationStatus(record);
+    if (status.applied) {
+      return status.output ?? record.output;
+    }
+
+    const current = await this.readFileOrEmpty(record.targetPath);
+    if (this.idempotency.bufferHash(current) !== record.beforeHash) {
+      throw new Error("Cannot safely replay fs.append: target changed since the idempotency record was prepared.");
+    }
+
+    await this.atomicWriteBuffer(record.targetPath, Buffer.concat([current, Buffer.from(content, "utf8")]));
+    const applied = this.idempotency.markFileMutationApplied(record.toolName, record.idempotencyKey);
+    return applied?.output ?? record.output;
+  }
+
+  private async applyPreparedCopy(record: FileMutationRecord, overwrite: boolean): Promise<JsonValue> {
+    const status = await this.fileMutationStatus(record);
+    if (status.applied) {
+      return status.output ?? record.output;
+    }
+
+    if (record.sourcePath === undefined) {
+      throw new Error("Cannot safely replay fs.copy: source path is missing from the idempotency record.");
+    }
+
+    const targetHash = await this.fileHash(record.targetPath);
+    if (!overwrite && targetHash !== undefined) {
+      throw new Error("Destination already exists.");
+    }
+    const source = await readFile(record.sourcePath);
+    if (this.idempotency.bufferHash(source) !== record.contentHash) {
+      throw new Error("Cannot safely replay fs.copy: source changed since the idempotency record was prepared.");
+    }
+
+    await mkdir(dirname(record.targetPath), { recursive: true });
+    await this.atomicWriteBuffer(record.targetPath, source);
+    const applied = this.idempotency.markFileMutationApplied(record.toolName, record.idempotencyKey);
+    return applied?.output ?? record.output;
+  }
+
+  private async applyPreparedMove(record: FileMutationRecord, overwrite: boolean): Promise<JsonValue> {
+    const status = await this.fileMutationStatus(record, { requireSourceRemoved: true });
+    if (status.applied) {
+      return status.output ?? record.output;
+    }
+
+    if (record.sourcePath === undefined) {
+      throw new Error("Cannot safely replay fs.move: source path is missing from the idempotency record.");
+    }
+
+    const targetHash = await this.fileHash(record.targetPath);
+    if (!overwrite && targetHash !== undefined) {
+      throw new Error("Destination already exists.");
+    }
+    const source = await readFile(record.sourcePath);
+    if (this.idempotency.bufferHash(source) !== record.contentHash) {
+      throw new Error("Cannot safely replay fs.move: source changed since the idempotency record was prepared.");
+    }
+
+    await mkdir(dirname(record.targetPath), { recursive: true });
+    await rename(record.sourcePath, record.targetPath);
+    const applied = this.idempotency.markFileMutationApplied(record.toolName, record.idempotencyKey);
+    return applied?.output ?? record.output;
+  }
+
+  private async fileMutationStatus(
+    record: FileMutationRecord,
+    options: { requireSourceRemoved?: boolean } = {}
+  ): Promise<ToolStatusQueryResult> {
+    if (record.status === "applied") {
+      return { applied: true, output: record.output };
+    }
+
+    const targetHash = await this.fileHash(record.targetPath);
+    if (targetHash !== record.afterHash) {
+      return { applied: false };
+    }
+
+    if (options.requireSourceRemoved === true && record.sourcePath !== undefined) {
+      if (await this.fileExists(record.sourcePath)) {
+        return { applied: false };
+      }
+    }
+
+    const applied = this.idempotency.markFileMutationApplied(record.toolName, record.idempotencyKey);
+    return { applied: true, output: applied?.output ?? record.output };
+  }
+
+  private assertFileMutationReplay(
+    record: FileMutationRecord,
+    toolName: string,
+    targetPath: string,
+    contentHash?: string,
+    sourcePath?: string
+  ): void {
+    if (record.toolName !== toolName || record.targetPath !== targetPath) {
+      throw new Error(`Idempotency key was already used for a different ${toolName} target.`);
+    }
+
+    if (sourcePath !== undefined && record.sourcePath !== sourcePath) {
+      throw new Error(`Idempotency key was already used for a different ${toolName} source.`);
+    }
+
+    if (contentHash !== undefined && record.contentHash !== contentHash) {
+      throw new Error(`Idempotency key was already used with different ${toolName} content.`);
+    }
+  }
+
+  private async readFileOrEmpty(path: string): Promise<Buffer> {
+    try {
+      return await readFile(path);
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") {
+        return Buffer.alloc(0);
+      }
+
+      throw error;
+    }
+  }
+
+  private async fileHash(path: string): Promise<string | undefined> {
+    try {
+      return this.idempotency.bufferHash(await readFile(path));
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") {
+        return undefined;
+      }
+
+      throw error;
+    }
+  }
+
+  private async fileExists(path: string): Promise<boolean> {
+    try {
+      await stat(path);
+      return true;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+
+  private async atomicWriteBuffer(path: string, contents: Buffer): Promise<void> {
+    const tempPath = join(dirname(path), `.operator-dock-${process.pid}-${randomUUID()}.tmp`);
+    await writeFile(tempPath, contents);
+    await rename(tempPath, path);
   }
 
   async deleteOutput(input: FileDeleteInput, context: FsToolExecutionContext): Promise<JsonValue> {
@@ -502,6 +812,10 @@ function isSafetyFailure(value: JsonValue | SafetyFailure): value is SafetyFailu
     && !Array.isArray(value)
     && "code" in value
     && "approvalRequired" in value;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 async function findInFile(path: string, relativePath: string, query: string, maxResults: number) {

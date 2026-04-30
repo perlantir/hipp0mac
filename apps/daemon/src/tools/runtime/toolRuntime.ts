@@ -160,6 +160,9 @@ export class ToolRuntime {
     if (orphan === undefined) {
       return;
     }
+    if (this.hasPendingReapproval(taskId, orphan.eventId)) {
+      return;
+    }
 
     const payload = orphan.payload;
     const toolName = typeof payload.toolName === "string" ? payload.toolName : undefined;
@@ -233,12 +236,20 @@ export class ToolRuntime {
       toolName,
       idempotencyKey: idempotencyKey ?? null
     });
-    await this.execute({
+    const result = await this.execute({
       taskId,
       toolName,
       input: resolvedInput,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey })
     });
+    if (manifest.sideEffectClass === "external" && result.status === "waiting_for_approval") {
+      this.dependencies.events.appendCanonical(taskId, "reconciliation_reapproval_required", {
+        intendedEventId: orphan.eventId,
+        toolName,
+        idempotencyKey: idempotencyKey ?? null,
+        approvalId: typeof result.error?.details?.approvalId === "string" ? result.error.details.approvalId : null
+      });
+    }
   }
 
   private async executeParsed(
@@ -629,6 +640,36 @@ export class ToolRuntime {
     }
 
     return undefined;
+  }
+
+  private hasPendingReapproval(taskId: string, intendedEventId: string): boolean {
+    const events = this.dependencies.events.canonicalEvents(taskId);
+    let reapprovalIndex = -1;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]!;
+      if (
+        event.eventType === "reconciliation_reapproval_required"
+        && event.payload.intendedEventId === intendedEventId
+      ) {
+        reapprovalIndex = index;
+        break;
+      }
+    }
+
+    if (reapprovalIndex === -1) {
+      return false;
+    }
+
+    return !events
+      .slice(reapprovalIndex + 1)
+      .some((event) =>
+        event.eventType === "approval_granted"
+        || event.eventType === "approval_denied"
+        || (
+          event.eventType === "tool_call_result"
+          && event.payload.intendedEventId === intendedEventId
+        )
+      );
   }
 
   private completePauseIfNeeded(result: ToolResult): void {

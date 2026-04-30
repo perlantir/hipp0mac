@@ -1,14 +1,16 @@
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import type { FastifyInstance } from "fastify";
 import {
   ToolExecutionResponseSchema,
   type JsonValue,
-  type ToolCapabilityManifest
+  type ToolCapabilityManifest,
+  type ToolResult
 } from "@operator-dock/protocol";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/connection.js";
@@ -355,6 +357,66 @@ describe("Phase 5B safety and idempotency", () => {
     expect(second.output).toMatchObject({ idempotent: true });
   });
 
+  it("fs_append_copy_move_idempotency_replay_safe", async () => {
+    const { app, root } = await configuredApp();
+    const workspace = join(root, "workspace");
+    mkdirSync(join(workspace, "tasks"), { recursive: true });
+    writeFileSync(join(workspace, "tasks", "append.txt"), "start", "utf8");
+    writeFileSync(join(workspace, "tasks", "copy-source.txt"), "copy-source", "utf8");
+    writeFileSync(join(workspace, "tasks", "move-source.txt"), "move-source", "utf8");
+
+    const appendKey = "019ddb83-f76d-7000-9000-000000000021";
+    const firstAppend = await executeAppApproved(app, {
+      toolName: "fs.append",
+      idempotencyKey: appendKey,
+      input: { path: "tasks/append.txt", content: "-once" }
+    });
+    const secondAppend = await executeAppApproved(app, {
+      toolName: "fs.append",
+      idempotencyKey: appendKey,
+      input: { path: "tasks/append.txt", content: "-once" }
+    });
+    expect(firstAppend.status).toBe("completed");
+    expect(secondAppend.status).toBe("completed");
+    expect(secondAppend.output).toMatchObject({ idempotent: true });
+    expect(readFileSync(join(workspace, "tasks", "append.txt"), "utf8")).toBe("start-once");
+
+    const copyKey = "019ddb83-f76d-7000-9000-000000000022";
+    await executeAppApproved(app, {
+      toolName: "fs.copy",
+      idempotencyKey: copyKey,
+      input: { from: "tasks/copy-source.txt", to: "tasks/copy-dest.txt" }
+    });
+    const secondCopy = await executeAppApproved(app, {
+      toolName: "fs.copy",
+      idempotencyKey: copyKey,
+      input: { from: "tasks/copy-source.txt", to: "tasks/copy-dest.txt" }
+    });
+    expect(secondCopy.status).toBe("completed");
+    expect(secondCopy.output).toMatchObject({ idempotent: true });
+    expect(readFileSync(join(workspace, "tasks", "copy-dest.txt"), "utf8")).toBe("copy-source");
+    expect(existsSync(join(root, "state", "tool-tombstones", "fs.copy.log"))).toBe(true);
+
+    const moveKey = "019ddb83-f76d-7000-9000-000000000023";
+    await executeAppApproved(app, {
+      toolName: "fs.move",
+      idempotencyKey: moveKey,
+      input: { from: "tasks/move-source.txt", to: "tasks/move-dest.txt" }
+    });
+    const secondMove = await executeAppApproved(app, {
+      toolName: "fs.move",
+      idempotencyKey: moveKey,
+      input: { from: "tasks/move-source.txt", to: "tasks/move-dest.txt" }
+    });
+    await app.close();
+    expect(secondMove.status).toBe("completed");
+    expect(secondMove.output).toMatchObject({ idempotent: true });
+    expect(existsSync(join(workspace, "tasks", "move-source.txt"))).toBe(false);
+    expect(readFileSync(join(workspace, "tasks", "move-dest.txt"), "utf8")).toBe("move-source");
+    expect(existsSync(join(root, "state", "tool-tombstones", "fs.move.log"))).toBe(true);
+    expect(existsSync(join(root, "state", "tool-tombstones", "fs.append"))).toBe(true);
+  });
+
   it("shell_exec_forbidden_patterns_battery", async () => {
     const { app } = await configuredApp();
     const commands = [
@@ -507,6 +569,197 @@ describe("Phase 5B budgets and reconciliation", () => {
     expect(result?.payload.synthesized).toBe(true);
   });
 
+  it("orphan_append_copy_move_status_queries_synthesize_results", async () => {
+    const harness = await runtimeHarness();
+    mkdirSync(join(harness.workspaceRoot, "tasks"), { recursive: true });
+
+    const appendPath = join(harness.workspaceRoot, "tasks", "append-orphan.txt");
+    writeFileSync(appendPath, "before-after", "utf8");
+    const appendOutput = {
+      path: appendPath,
+      relativePath: "tasks/append-orphan.txt",
+      bytesWritten: 6,
+      sizeBytes: 12,
+      hash: harness.idempotency.bufferHash(Buffer.from("before-after"))
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.append",
+      idempotencyKey: "019ddb83-f76d-7000-9000-000000000031",
+      targetPath: appendPath,
+      relativePath: "tasks/append-orphan.txt",
+      contentHash: harness.idempotency.bufferHash(Buffer.from("-after")),
+      beforeHash: harness.idempotency.bufferHash(Buffer.from("before")),
+      afterHash: appendOutput.hash,
+      output: appendOutput
+    });
+    const appendIntent = appendIntended(harness, "task-orphan-append", "fs.append", "019ddb83-f76d-7000-9000-000000000031", {
+      path: "tasks/append-orphan.txt",
+      content: "-after"
+    });
+
+    const copySource = join(harness.workspaceRoot, "tasks", "copy-source-orphan.txt");
+    const copyDest = join(harness.workspaceRoot, "tasks", "copy-dest-orphan.txt");
+    writeFileSync(copySource, "copied", "utf8");
+    writeFileSync(copyDest, "copied", "utf8");
+    const copyOutput = {
+      path: copyDest,
+      relativePath: "tasks/copy-dest-orphan.txt",
+      sizeBytes: 6,
+      hash: harness.idempotency.bufferHash(Buffer.from("copied"))
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.copy",
+      idempotencyKey: "019ddb83-f76d-7000-9000-000000000032",
+      sourcePath: copySource,
+      targetPath: copyDest,
+      relativePath: "tasks/copy-dest-orphan.txt",
+      contentHash: copyOutput.hash,
+      afterHash: copyOutput.hash,
+      output: copyOutput
+    });
+    const copyIntent = appendIntended(harness, "task-orphan-copy", "fs.copy", "019ddb83-f76d-7000-9000-000000000032", {
+      from: "tasks/copy-source-orphan.txt",
+      to: "tasks/copy-dest-orphan.txt"
+    });
+
+    const moveSource = join(harness.workspaceRoot, "tasks", "move-source-orphan.txt");
+    const moveDest = join(harness.workspaceRoot, "tasks", "move-dest-orphan.txt");
+    writeFileSync(moveDest, "moved", "utf8");
+    const moveOutput = {
+      path: moveDest,
+      relativePath: "tasks/move-dest-orphan.txt",
+      sizeBytes: 5,
+      hash: harness.idempotency.bufferHash(Buffer.from("moved"))
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.move",
+      idempotencyKey: "019ddb83-f76d-7000-9000-000000000033",
+      sourcePath: moveSource,
+      targetPath: moveDest,
+      relativePath: "tasks/move-dest-orphan.txt",
+      contentHash: moveOutput.hash,
+      afterHash: moveOutput.hash,
+      output: moveOutput
+    });
+    const moveIntent = appendIntended(harness, "task-orphan-move", "fs.move", "019ddb83-f76d-7000-9000-000000000033", {
+      from: "tasks/move-source-orphan.txt",
+      to: "tasks/move-dest-orphan.txt"
+    });
+
+    await harness.runtime.reconcileTask("task-orphan-append");
+    await harness.runtime.reconcileTask("task-orphan-copy");
+    await harness.runtime.reconcileTask("task-orphan-move");
+
+    expect(synthesizedResultFor(harness, "task-orphan-append")?.payload.intendedEventId).toBe(appendIntent);
+    expect(synthesizedResultFor(harness, "task-orphan-copy")?.payload.intendedEventId).toBe(copyIntent);
+    expect(synthesizedResultFor(harness, "task-orphan-move")?.payload.intendedEventId).toBe(moveIntent);
+  });
+
+  it("orphan_fs_append_with_status_query_synthesizes_result", async () => {
+    const harness = await runtimeHarness();
+    mkdirSync(join(harness.workspaceRoot, "tasks"), { recursive: true });
+    const idempotencyKey = "019ddb83-f76d-7000-9000-000000000034";
+    const targetPath = join(harness.workspaceRoot, "tasks", "append-required.txt");
+    writeFileSync(targetPath, "onetwo", "utf8");
+    const output = {
+      path: targetPath,
+      relativePath: "tasks/append-required.txt",
+      bytesWritten: 3,
+      sizeBytes: 6,
+      hash: harness.idempotency.bufferHash(Buffer.from("onetwo"))
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.append",
+      idempotencyKey,
+      targetPath,
+      relativePath: "tasks/append-required.txt",
+      contentHash: harness.idempotency.bufferHash(Buffer.from("two")),
+      beforeHash: harness.idempotency.bufferHash(Buffer.from("one")),
+      afterHash: output.hash,
+      output
+    });
+    removeFileMutationCache(harness, "fs.append", idempotencyKey);
+    const intendedEventId = appendIntended(harness, "task-orphan-required-append", "fs.append", idempotencyKey, {
+      path: "tasks/append-required.txt",
+      content: "two"
+    });
+
+    await harness.runtime.reconcileTask("task-orphan-required-append");
+    const result = synthesizedResultFor(harness, "task-orphan-required-append");
+    expect(result?.payload.intendedEventId).toBe(intendedEventId);
+  });
+
+  it("orphan_fs_copy_with_status_query_synthesizes_result", async () => {
+    const harness = await runtimeHarness();
+    mkdirSync(join(harness.workspaceRoot, "tasks"), { recursive: true });
+    const idempotencyKey = "019ddb83-f76d-7000-9000-000000000035";
+    const sourcePath = join(harness.workspaceRoot, "tasks", "copy-required-source.txt");
+    const targetPath = join(harness.workspaceRoot, "tasks", "copy-required-target.txt");
+    writeFileSync(sourcePath, "copy", "utf8");
+    writeFileSync(targetPath, "copy", "utf8");
+    const hash = harness.idempotency.bufferHash(Buffer.from("copy"));
+    const output = {
+      path: targetPath,
+      relativePath: "tasks/copy-required-target.txt",
+      sizeBytes: 4,
+      hash
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.copy",
+      idempotencyKey,
+      sourcePath,
+      targetPath,
+      relativePath: "tasks/copy-required-target.txt",
+      contentHash: hash,
+      afterHash: hash,
+      output
+    });
+    removeFileMutationCache(harness, "fs.copy", idempotencyKey);
+    const intendedEventId = appendIntended(harness, "task-orphan-required-copy", "fs.copy", idempotencyKey, {
+      from: "tasks/copy-required-source.txt",
+      to: "tasks/copy-required-target.txt"
+    });
+
+    await harness.runtime.reconcileTask("task-orphan-required-copy");
+    const result = synthesizedResultFor(harness, "task-orphan-required-copy");
+    expect(result?.payload.intendedEventId).toBe(intendedEventId);
+  });
+
+  it("orphan_fs_move_with_status_query_synthesizes_result", async () => {
+    const harness = await runtimeHarness();
+    mkdirSync(join(harness.workspaceRoot, "tasks"), { recursive: true });
+    const idempotencyKey = "019ddb83-f76d-7000-9000-000000000036";
+    const sourcePath = join(harness.workspaceRoot, "tasks", "move-required-source.txt");
+    const targetPath = join(harness.workspaceRoot, "tasks", "move-required-target.txt");
+    writeFileSync(targetPath, "move", "utf8");
+    const hash = harness.idempotency.bufferHash(Buffer.from("move"));
+    const output = {
+      path: targetPath,
+      relativePath: "tasks/move-required-target.txt",
+      sizeBytes: 4,
+      hash
+    };
+    harness.idempotency.prepareFileMutation({
+      toolName: "fs.move",
+      idempotencyKey,
+      sourcePath,
+      targetPath,
+      relativePath: "tasks/move-required-target.txt",
+      contentHash: hash,
+      afterHash: hash,
+      output
+    });
+    removeFileMutationCache(harness, "fs.move", idempotencyKey);
+    const intendedEventId = appendIntended(harness, "task-orphan-required-move", "fs.move", idempotencyKey, {
+      from: "tasks/move-required-source.txt",
+      to: "tasks/move-required-target.txt"
+    });
+
+    await harness.runtime.reconcileTask("task-orphan-required-move");
+    const result = synthesizedResultFor(harness, "task-orphan-required-move");
+    expect(result?.payload.intendedEventId).toBe(intendedEventId);
+  });
+
   it("orphan_write_non_idempotent_no_status_query_blocks_task", async () => {
     const harness = await runtimeHarness();
     harness.runtime.register(fakeTool(toolManifest({
@@ -529,6 +782,65 @@ describe("Phase 5B budgets and reconciliation", () => {
 
     await harness.runtime.reconcileTask("task-orphan-block");
     expect(harness.eventStore.readAll("task-orphan-block").map((event) => event.eventType)).toContain("reconciliation_blocked");
+  });
+
+  it("orphan_external_consumed_approval_requires_reapproval", async () => {
+    const harness = await runtimeHarness();
+    let executions = 0;
+    harness.runtime.register({
+      name: "test.external-status",
+      version: "1",
+      description: "External test tool with status query.",
+      riskLevel: "dangerous",
+      manifest: toolManifest({
+        name: "test.external-status",
+        description: "External test tool with status query.",
+        sideEffectClass: "external",
+        supportsIdempotency: true,
+        supportsStatusQuery: true,
+        approvalPolicy: { op: "always" }
+      }),
+      inputSchema: z.object({}),
+      outputSchema: z.object({ ok: z.boolean() }),
+      execute: async () => {
+        executions += 1;
+        return { ok: true };
+      },
+      statusQuery: async () => ({ applied: false })
+    });
+    const intendedEventId = harness.eventStore.append("task-external-reapproval", "tool_call_intended", {
+      executionId: "exec-external-reapproval",
+      toolName: "test.external-status",
+      toolVersion: "1",
+      idempotencyKey: "019ddb83-f76d-7000-9000-000000000041",
+      resolvedInput: {},
+      safetyDecision: { eventId: "safety-old", decision: "approval_required" },
+      approvalEventId: "approval-old",
+      scopeChecks: [],
+      timeoutMs: 1000
+    });
+
+    await harness.runtime.reconcileTask("task-external-reapproval");
+    expect(executions).toBe(0);
+    expect(harness.approvals.listPending()).toHaveLength(1);
+    expect(harness.eventStore.readAll("task-external-reapproval").map((event) => event.eventType))
+      .toContain("reconciliation_reapproval_required");
+
+    await harness.runtime.reconcileTask("task-external-reapproval");
+    expect(harness.approvals.listPending()).toHaveLength(1);
+
+    const [pending] = harness.approvals.listPending();
+    if (pending === undefined) {
+      throw new Error("Expected reapproval to be pending.");
+    }
+    const approved = await harness.runtime.resumeApproval(pending.id, true);
+    expect(approved.status).toBe("completed");
+    expect(executions).toBe(1);
+    const events = harness.eventStore.readAll("task-external-reapproval");
+    expect(events.some((event) =>
+      event.eventType === "reconciliation_reapproval_required"
+      && event.payload.intendedEventId === intendedEventId
+    )).toBe(true);
   });
 
   it("no_orphan_no_reconciliation_and_reconciliation_idempotent", async () => {
@@ -590,6 +902,150 @@ describe("Phase 5B budgets and reconciliation", () => {
       "task_state_transition"
     ]));
   });
+
+  it("end_to_end_with_crash_100_injection_points", async () => {
+    let crashArmed = false;
+    let crashCount = 0;
+    const harness = await runtimeHarness({
+      crashAfterIntended: () => {
+        if (crashArmed) {
+          crashArmed = false;
+          crashCount += 1;
+          throw new ToolRuntimeError("TOOL_EXECUTION_FAILED", `Injected crash ${crashCount}.`);
+        }
+      }
+    });
+    mkdirSync(join(harness.workspaceRoot, "tasks", "crash"), { recursive: true });
+    writeFileSync(join(harness.workspaceRoot, "tasks", "crash", "source.txt"), "source", "utf8");
+
+    const appendPath = join(harness.workspaceRoot, "tasks", "crash", "append.txt");
+    writeFileSync(appendPath, "", "utf8");
+    const expectedAppends: string[] = [];
+
+    const logicalCallCount = 50;
+    const injectionPointCount = 100;
+    for (let injectionPoint = 0; injectionPoint < injectionPointCount; injectionPoint += 1) {
+      const logicalCallIndex = injectionPoint % logicalCallCount;
+      const taskId = `task-crash-100-${injectionPoint}`;
+      const kind = logicalCallIndex % 6;
+      const key = idempotencyKeyForIndex(1000 + injectionPoint);
+      let request: Record<string, unknown>;
+      if (kind === 0) {
+        request = {
+          taskId,
+          toolName: "sleep.wait",
+          input: { durationMs: 0 }
+        };
+      } else if (kind === 1) {
+        request = {
+          taskId,
+          toolName: "fs.write",
+          idempotencyKey: key,
+          input: { path: `tasks/crash/write-${injectionPoint}.txt`, contents: `write-${injectionPoint}` }
+        };
+      } else if (kind === 2) {
+        const fragment = `append-${injectionPoint}\n`;
+        expectedAppends.push(fragment);
+        request = {
+          taskId,
+          toolName: "fs.append",
+          idempotencyKey: key,
+          input: { path: "tasks/crash/append.txt", content: fragment }
+        };
+      } else if (kind === 3) {
+        request = {
+          taskId,
+          toolName: "fs.copy",
+          idempotencyKey: key,
+          input: { from: "tasks/crash/source.txt", to: `tasks/crash/copy-${injectionPoint}.txt` }
+        };
+      } else if (kind === 4) {
+        writeFileSync(join(harness.workspaceRoot, "tasks", "crash", `move-${injectionPoint}.txt`), `move-${injectionPoint}`, "utf8");
+        request = {
+          taskId,
+          toolName: "fs.move",
+          idempotencyKey: key,
+          input: { from: `tasks/crash/move-${injectionPoint}.txt`, to: `tasks/crash/moved-${injectionPoint}.txt` }
+        };
+      } else {
+        writeFileSync(join(harness.workspaceRoot, "tasks", "crash", `delete-${injectionPoint}.txt`), `delete-${injectionPoint}`, "utf8");
+        request = {
+          taskId,
+          toolName: "fs.delete",
+          idempotencyKey: key,
+          input: { path: `tasks/crash/delete-${injectionPoint}.txt` }
+        };
+      }
+
+      crashArmed = true;
+      await expect(executeHarnessApproved(harness, request)).rejects.toThrow(/Injected crash/);
+      await harness.runtime.reconcileTask(taskId);
+      await resolveAllPendingApprovals(harness);
+    }
+
+    expect(crashCount).toBe(100);
+    expect(readFileSync(appendPath, "utf8")).toBe(expectedAppends.join(""));
+    for (let injectionPoint = 0; injectionPoint < injectionPointCount; injectionPoint += 1) {
+      const kind = (injectionPoint % logicalCallCount) % 6;
+      if (kind === 1) {
+        expect(readFileSync(join(harness.workspaceRoot, "tasks", "crash", `write-${injectionPoint}.txt`), "utf8")).toBe(`write-${injectionPoint}`);
+      }
+      if (kind === 3) {
+        expect(readFileSync(join(harness.workspaceRoot, "tasks", "crash", `copy-${injectionPoint}.txt`), "utf8")).toBe("source");
+      }
+      if (kind === 4) {
+        expect(existsSync(join(harness.workspaceRoot, "tasks", "crash", `move-${injectionPoint}.txt`))).toBe(false);
+        expect(readFileSync(join(harness.workspaceRoot, "tasks", "crash", `moved-${injectionPoint}.txt`), "utf8")).toBe(`move-${injectionPoint}`);
+      }
+      if (kind === 5) {
+        expect(existsSync(join(harness.workspaceRoot, "tasks", "crash", `delete-${injectionPoint}.txt`))).toBe(false);
+      }
+      const events = harness.eventStore.readAll(`task-crash-100-${injectionPoint}`);
+      expect(events.map((event) => event.eventType)).toContain("orphan_reconciliation_started");
+      expect(events.map((event) => event.eventType)).toContain("tool_call_result");
+    }
+  }, 30_000);
+
+  it("soak_with_orphans_ci_scaled", async () => {
+    const totalCalls = Number(process.env.PHASE5B_ORPHAN_SOAK_CALLS ?? "500");
+    let crashArmed = false;
+    let crashes = 0;
+    const harness = await runtimeHarness({
+      crashAfterIntended: () => {
+        if (crashArmed) {
+          crashArmed = false;
+          crashes += 1;
+          throw new ToolRuntimeError("TOOL_EXECUTION_FAILED", "Injected orphan for soak.");
+        }
+      }
+    });
+
+    for (let index = 0; index < totalCalls; index += 1) {
+      const taskId = `task-orphan-soak-${index}`;
+      crashArmed = index % 100 === 0;
+      if (crashArmed) {
+        await expect(harness.runtime.execute({
+          taskId,
+          toolName: "sleep.wait",
+          input: { durationMs: 0 }
+        })).rejects.toThrow(/Injected orphan/);
+        await harness.runtime.reconcileTask(taskId);
+      } else {
+        const result = await harness.runtime.execute({
+          taskId,
+          toolName: "sleep.wait",
+          input: { durationMs: 0 }
+        });
+        expect(result.status).toBe("completed");
+      }
+
+      const events = harness.eventStore.readAll(taskId);
+      expect(events.some((event) => event.eventType === "tool_call_result")).toBe(true);
+    }
+
+    expect(totalCalls).toBeGreaterThanOrEqual(500);
+    expect(crashes).toBe(Math.ceil(totalCalls / 100));
+  }, 30_000);
 
   it("http_fetch_internal_ips_denied_by_default_and_allowlisted_host_succeeds", async () => {
     const { app } = await configuredApp();
@@ -700,7 +1156,110 @@ async function runtimeHarness(options: {
   runtime.register(shellRunInteractiveTool());
   runtime.register(httpFetchTool());
   runtime.register(sleepWaitTool());
-  return { runtime, eventStore, manifests, safety, idempotency, database };
+  return {
+    runtime,
+    eventStore,
+    manifests,
+    safety,
+    idempotency,
+    database,
+    approvals,
+    root,
+    workspaceRoot: join(root, "workspace")
+  };
+}
+
+type RuntimeHarness = Awaited<ReturnType<typeof runtimeHarness>>;
+
+async function executeAppApproved(app: FastifyInstance, payload: Record<string, unknown>): Promise<ToolResult> {
+  const pending = ToolExecutionResponseSchema.parse((await app.inject({
+    method: "POST",
+    url: "/v1/tools/execute",
+    headers: authHeaders(),
+    payload
+  })).json()).result;
+  if (pending.status !== "waiting_for_approval") {
+    return pending;
+  }
+
+  return ToolExecutionResponseSchema.parse((await app.inject({
+    method: "POST",
+    url: `/v1/tools/approvals/${approvalIdFrom(pending)}/resolve`,
+    headers: authHeaders(),
+    payload: { approved: true }
+  })).json()).result;
+}
+
+async function executeHarnessApproved(
+  harness: RuntimeHarness,
+  request: Record<string, unknown>
+): Promise<ToolResult> {
+  const result = await harness.runtime.execute(request);
+  if (result.status !== "waiting_for_approval") {
+    return result;
+  }
+
+  return harness.runtime.resumeApproval(approvalIdFrom(result), true);
+}
+
+async function resolveAllPendingApprovals(harness: RuntimeHarness): Promise<void> {
+  for (const approval of harness.approvals.listPending()) {
+    await harness.runtime.resumeApproval(approval.id, true);
+  }
+}
+
+function approvalIdFrom(result: ToolResult): string {
+  const approvalId = result.error?.details?.approvalId;
+  if (typeof approvalId !== "string") {
+    throw new Error("Expected tool result to include an approval id.");
+  }
+
+  return approvalId;
+}
+
+function appendIntended(
+  harness: RuntimeHarness,
+  taskId: string,
+  toolName: string,
+  idempotencyKey: string,
+  resolvedInput: Record<string, JsonValue>
+): string {
+  return harness.eventStore.append(taskId, "tool_call_intended", {
+    executionId: `exec-${taskId}`,
+    toolName,
+    toolVersion: "1",
+    idempotencyKey,
+    resolvedInput,
+    safetyDecision: { eventId: "safety", decision: "approval_required" },
+    scopeChecks: [],
+    timeoutMs: 1000
+  });
+}
+
+function synthesizedResultFor(harness: RuntimeHarness, taskId: string) {
+  return harness.eventStore.readAll(taskId).find((event) =>
+    event.eventType === "tool_call_result"
+    && event.payload.synthesized === true
+  );
+}
+
+function idempotencyKeyForIndex(index: number): string {
+  return `019ddb83-f76d-7000-9000-${index.toString().padStart(12, "0")}`;
+}
+
+function removeFileMutationCache(harness: RuntimeHarness, toolName: string, idempotencyKey: string): void {
+  rmSync(join(
+    harness.root,
+    "state",
+    "idempotency",
+    "file-mutations",
+    safeId(toolName),
+    `${safeId(idempotencyKey)}.json`
+  ), { force: true });
+}
+
+function safeId(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 function fakeTool(manifest: ToolCapabilityManifest): ToolDefinition<Record<string, JsonValue>, JsonValue> {

@@ -46,6 +46,12 @@ Tools that can answer whether a key applied should implement
 synthesize a `tool_call_result` after a crash if the side effect already
 applied.
 
+Filesystem mutation tools use durable logs for status queries. `fs.append`
+uses per-file append logs under `state/tool-tombstones/fs.append/`;
+`fs.copy` and `fs.move` use tombstone logs at
+`state/tool-tombstones/fs.copy.log` and
+`state/tool-tombstones/fs.move.log`.
+
 ## Required Tests
 
 Each new tool needs tests for:

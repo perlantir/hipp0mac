@@ -34,7 +34,17 @@ function.
 
 ## Current Notes
 
-The starter `fs.delete` tool supports status query through the
-idempotency tombstone store. `shell.exec` is external without native
-idempotency/status query, so an orphaned execution blocks instead of
-guessing whether a side effect occurred.
+The filesystem mutation tools support status queries through durable
+idempotency logs:
+
+- `fs.append` records a per-file append log under
+  `state/tool-tombstones/fs.append/`.
+- `fs.copy` records tombstones at `state/tool-tombstones/fs.copy.log`.
+- `fs.move` records tombstones at `state/tool-tombstones/fs.move.log`.
+- `fs.delete` records tombstones in the idempotency store.
+
+`shell.exec` is external without native idempotency/status query, so an
+orphaned execution blocks instead of guessing whether a side effect
+occurred. External tools with status query support must still get a fresh
+approval before re-execution when the original single-use approval was
+consumed by the orphaned attempt.

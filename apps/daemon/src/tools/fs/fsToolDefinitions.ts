@@ -68,6 +68,7 @@ export function fsToolDefinitions(
         description: "Append UTF-8 content to a workspace file.",
         sideEffectClass: "write-non-idempotent",
         supportsIdempotency: true,
+        supportsStatusQuery: true,
         filesystemScope: { mode: "workspace", paths: [] },
         approvalPolicy: { op: "always" }
       }),
@@ -75,7 +76,8 @@ export function fsToolDefinitions(
       outputSchema: FileMutationOutputSchema,
       classifyRisk: (input, context) => writeRisk(context, (input as FileAppendInput).path),
       requiresApproval: (input, context) => writeApproval(context, (input as FileAppendInput).path),
-      execute: (input, context) => fsTools.appendOutput(input as FileAppendInput, fsContext(context))
+      execute: (input, context) => fsTools.appendOutput(input as FileAppendInput, fsContext(context)),
+      statusQuery: (idempotencyKey) => fsTools.appendStatus(idempotencyKey)
     },
     {
       name: "fs.list",
@@ -107,6 +109,7 @@ export function fsToolDefinitions(
         description: "Copy a file into a workspace path.",
         sideEffectClass: "write-non-idempotent",
         supportsIdempotency: true,
+        supportsStatusQuery: true,
         filesystemScope: { mode: "workspace", paths: [] },
         approvalPolicy: { op: "always" }
       }),
@@ -114,7 +117,8 @@ export function fsToolDefinitions(
       outputSchema: FileMutationOutputSchema,
       classifyRisk: (input, context) => writeRisk(context, (input as FileCopyInput).to),
       requiresApproval: (input, context) => writeApproval(context, (input as FileCopyInput).to),
-      execute: (input, context) => fsTools.copyOutput(input as FileCopyInput, fsContext(context))
+      execute: (input, context) => fsTools.copyOutput(input as FileCopyInput, fsContext(context)),
+      statusQuery: (idempotencyKey) => fsTools.copyStatus(idempotencyKey)
     },
     {
       name: "fs.move",
@@ -126,6 +130,7 @@ export function fsToolDefinitions(
         description: "Move a file inside the workspace.",
         sideEffectClass: "write-non-idempotent",
         supportsIdempotency: true,
+        supportsStatusQuery: true,
         filesystemScope: { mode: "workspace", paths: [] },
         approvalPolicy: { op: "always" }
       }),
@@ -141,7 +146,8 @@ export function fsToolDefinitions(
         const moveInput = input as FileMoveInput;
         return writeApproval(context, moveInput.from) ?? writeApproval(context, moveInput.to);
       },
-      execute: (input, context) => fsTools.moveOutput(input as FileMoveInput, fsContext(context))
+      execute: (input, context) => fsTools.moveOutput(input as FileMoveInput, fsContext(context)),
+      statusQuery: (idempotencyKey) => fsTools.moveStatus(idempotencyKey)
     },
     {
       name: "fs.delete",
