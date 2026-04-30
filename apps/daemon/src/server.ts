@@ -36,6 +36,11 @@ import { LoopDetector } from "./agent/loopDetection.js";
 import { StubMemoryInterface } from "./agent/memory.js";
 import { QualityAuditor, QualityReportRepository } from "./agent/quality.js";
 import { RecoveryManager, StrategyEffectivenessRepository } from "./agent/recoveryManager.js";
+import {
+  runStartupRecovery,
+  StartupRecoveryCheckpointStore,
+  type DaemonRuntimeState
+} from "./agent/startupRecovery.js";
 import { registerAgentLoopRoutes } from "./agent/routes.js";
 import {
   bearerTokenFromRequest,
@@ -75,6 +80,7 @@ export interface BuildAppOptions {
   logger?: boolean;
   logStream?: Writable;
   migrate?: boolean;
+  startupRecovery?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -131,7 +137,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   toolRuntime.register(shellRunInteractiveTool());
   toolRuntime.register(httpFetchTool());
   toolRuntime.register(sleepWaitTool());
-  await toolRuntime.reconcileAll();
   const modelRouter = buildDefaultModelRouter(providerSettings.listProviders(), credentialStore, fetch, {
     eventSink: new EventStoreModelEventSink(eventStore)
   });
@@ -162,6 +167,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(options.logStream === undefined ? {} : { stream: options.logStream })
     })
   });
+  let daemonState: DaemonRuntimeState = options.startupRecovery === false ? "ready" : "starting";
+  let startupRecoveryStarted = false;
+  const startupRecoveryCheckpoints = new StartupRecoveryCheckpointStore(paths, persistenceKeys);
+
+  const startStartupRecovery = (): void => {
+    if (options.startupRecovery === false || startupRecoveryStarted) {
+      return;
+    }
+
+    startupRecoveryStarted = true;
+    daemonState = "recovering";
+    void runStartupRecovery({
+      events: toolEvents,
+      toolRuntime,
+      checkpoints: startupRecoveryCheckpoints,
+      logger: app.log
+    }).catch((error) => {
+      app.log.error(error, "startup recovery failed");
+    }).finally(() => {
+      daemonState = "ready";
+    });
+  };
+
+  app.server.once("listening", startStartupRecovery);
 
   app.addHook("onRequest", async (request, reply) => {
     if (!tokensEqual(bearerTokenFromRequest(request), authToken)) {
@@ -222,6 +251,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       service: "operator-dock-daemon",
       version: "0.1.0",
       database: "ok",
+      state: daemonState,
       build,
       timestamp: new Date().toISOString()
     });

@@ -165,7 +165,7 @@ export class LockController {
   }
 
   private isStale(record: TaskLockRecord): boolean {
-    return Date.now() - Date.parse(record.lastHeartbeat) >= this.staleAfterMs;
+    return Date.now() - Date.parse(record.lastHeartbeat) >= this.staleAfterMs || !processExists(record.pid);
   }
 
   private lockRecord(): TaskLockRecord {
@@ -185,4 +185,16 @@ function sleep(ms: number): void {
     return;
   }
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH") {
+      return false;
+    }
+    return true;
+  }
 }

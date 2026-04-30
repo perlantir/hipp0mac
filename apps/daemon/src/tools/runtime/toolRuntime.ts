@@ -10,7 +10,7 @@ import {
   type ToolRiskLevel
 } from "@operator-dock/protocol";
 import type { WorkspaceService } from "../../workspace/workspaceService.js";
-import type { LockController, TaskLockHandle } from "../../persistence/lockController.js";
+import { LockHeldError, type LockController, type TaskLockHandle } from "../../persistence/lockController.js";
 import { uuidv7 } from "../../persistence/uuidv7.js";
 import { FsToolSafetyError } from "../fs/fsToolService.js";
 import { BudgetManager, pricingVersion, resultBytes } from "./budgetManager.js";
@@ -163,6 +163,9 @@ export class ToolRuntime {
     if (this.hasPendingReapproval(taskId, orphan.eventId)) {
       return;
     }
+    if (this.hasPendingHumanIntervention(taskId, orphan.eventId)) {
+      return;
+    }
 
     const payload = orphan.payload;
     const toolName = typeof payload.toolName === "string" ? payload.toolName : undefined;
@@ -236,12 +239,26 @@ export class ToolRuntime {
       toolName,
       idempotencyKey: idempotencyKey ?? null
     });
-    const result = await this.execute({
-      taskId,
-      toolName,
-      input: resolvedInput,
-      ...(idempotencyKey === undefined ? {} : { idempotencyKey })
-    });
+    let result: ToolResult;
+    try {
+      result = await this.execute({
+        taskId,
+        toolName,
+        input: resolvedInput,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey })
+      });
+    } catch (error) {
+      if (error instanceof LockHeldError) {
+        this.dependencies.events.appendCanonical(taskId, "reconciliation_needs_human_intervention", {
+          intendedEventId: orphan.eventId,
+          toolName,
+          reason: "Task lock is held by another process or could not be reclaimed safely."
+        });
+        return;
+      }
+
+      throw error;
+    }
     if (manifest.sideEffectClass === "external" && result.status === "waiting_for_approval") {
       this.dependencies.events.appendCanonical(taskId, "reconciliation_reapproval_required", {
         intendedEventId: orphan.eventId,
@@ -669,6 +686,32 @@ export class ToolRuntime {
           event.eventType === "tool_call_result"
           && event.payload.intendedEventId === intendedEventId
         )
+      );
+  }
+
+  private hasPendingHumanIntervention(taskId: string, intendedEventId: string): boolean {
+    const events = this.dependencies.events.canonicalEvents(taskId);
+    let interventionIndex = -1;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]!;
+      if (
+        event.eventType === "reconciliation_needs_human_intervention"
+        && event.payload.intendedEventId === intendedEventId
+      ) {
+        interventionIndex = index;
+        break;
+      }
+    }
+
+    if (interventionIndex === -1) {
+      return false;
+    }
+
+    return !events
+      .slice(interventionIndex + 1)
+      .some((event) =>
+        event.eventType === "tool_call_result"
+        && event.payload.intendedEventId === intendedEventId
       );
   }
 

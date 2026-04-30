@@ -598,6 +598,39 @@ describe("Phase 5B budgets and reconciliation", () => {
     expect(events.map((event) => event.eventType)).toContain("orphan_reconciliation_reexecute");
   });
 
+  it("orphan_reconciliation_marks_lock_held_for_human_intervention", async () => {
+    const harness = await runtimeHarness();
+    const taskId = "task-lock-held-reconcile";
+    const intendedEventId = harness.eventStore.append(taskId, "tool_call_intended", {
+      executionId: "exec-lock-held",
+      toolName: "sleep.wait",
+      toolVersion: "1",
+      idempotencyKey: null,
+      resolvedInput: { durationMs: 0 },
+      safetyDecision: { eventId: "safety", decision: "allow" },
+      scopeChecks: [],
+      timeoutMs: 1000
+    });
+    const now = new Date().toISOString();
+    writeFileSync(join(harness.root, "state", "locks", `${taskId}.lock`), JSON.stringify({
+      schemaVersion: 1,
+      daemonInstanceId: "other-live-daemon",
+      pid: process.pid,
+      acquiredAt: now,
+      lastHeartbeat: now
+    }));
+
+    await harness.runtime.reconcileTask(taskId);
+    await harness.runtime.reconcileTask(taskId);
+
+    const events = harness.eventStore.readAll(taskId);
+    expect(events.filter((event) => event.eventType === "tool_call_result")).toHaveLength(0);
+    expect(events.filter((event) =>
+      event.eventType === "reconciliation_needs_human_intervention"
+      && event.payload.intendedEventId === intendedEventId
+    )).toHaveLength(1);
+  });
+
   it("orphan_write_non_idempotent_with_status_query_synthesizes_result", async () => {
     const harness = await runtimeHarness();
     harness.idempotency.record({
