@@ -163,6 +163,26 @@ export const providerCatalog: ProviderTemplate[] = [
         capabilities: localCapabilities
       }
     ]
+  },
+  {
+    id: "mock",
+    kind: "local",
+    displayName: "Mock",
+    defaultModel: "mock-loop",
+    roleDefaults: {
+      planner: "mock-loop",
+      executor: "mock-loop",
+      verifier: "mock-loop",
+      summarizer: "mock-loop",
+      memoryCurator: "mock-loop"
+    },
+    models: [
+      {
+        id: "mock-loop",
+        displayName: "Mock Loop",
+        capabilities: localCapabilities
+      }
+    ]
   }
 ];
 
@@ -171,7 +191,7 @@ export function defaultProviderConfig(template: ProviderTemplate): ProviderConfi
     id: template.id,
     kind: template.kind,
     displayName: template.displayName,
-    enabled: template.kind === "local",
+    enabled: template.kind === "local" && template.id !== "mock",
     defaultModel: template.defaultModel,
     roleDefaults: template.roleDefaults,
     apiKeyConfigured: false,
@@ -190,4 +210,3 @@ export function findProviderTemplate(providerId: ProviderId): ProviderTemplate {
 
   return template;
 }
-
