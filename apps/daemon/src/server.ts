@@ -32,7 +32,15 @@ import { ProviderSettingsRepository } from "./providers/providerSettingsReposito
 import { registerProviderRoutes } from "./providers/routes.js";
 import { AgentLoop } from "./agent/agentLoop.js";
 import { ContextEngine } from "./agent/contextEngine.js";
+import { LoopDetector } from "./agent/loopDetection.js";
 import { StubMemoryInterface } from "./agent/memory.js";
+import { QualityAuditor, QualityReportRepository } from "./agent/quality.js";
+import { RecoveryManager, StrategyEffectivenessRepository } from "./agent/recoveryManager.js";
+import {
+  runStartupRecovery,
+  StartupRecoveryCheckpointStore,
+  type DaemonRuntimeState
+} from "./agent/startupRecovery.js";
 import { registerAgentLoopRoutes } from "./agent/routes.js";
 import {
   bearerTokenFromRequest,
@@ -72,6 +80,7 @@ export interface BuildAppOptions {
   logger?: boolean;
   logStream?: Writable;
   migrate?: boolean;
+  startupRecovery?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -102,6 +111,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const tasks = new TaskRepository(database);
   const providerSettings = new ProviderSettingsRepository(database);
   const workspace = new WorkspaceService(new WorkspaceSettingsRepository(database));
+  const workspaceRoot = workspace.getWorkspace()?.rootPath ?? paths.root;
   const toolEvents = new ToolEventStore(database, eventBus, eventStore);
   const fileLogger = new FileOperationLogger(database);
   const idempotency = new IdempotencyStore(paths);
@@ -127,9 +137,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   toolRuntime.register(shellRunInteractiveTool());
   toolRuntime.register(httpFetchTool());
   toolRuntime.register(sleepWaitTool());
-  await toolRuntime.reconcileAll();
   const modelRouter = buildDefaultModelRouter(providerSettings.listProviders(), credentialStore, fetch, {
     eventSink: new EventStoreModelEventSink(eventStore)
+  });
+  const recovery = new RecoveryManager({
+    eventStore,
+    effectiveness: new StrategyEffectivenessRepository(database)
+  });
+  const qualityAuditor = new QualityAuditor({
+    eventStore,
+    reports: new QualityReportRepository(database),
+    workspaceRoot
   });
   const agentLoop = new AgentLoop({
     eventStore,
@@ -138,7 +156,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     toolRuntime,
     manifests,
     context: new ContextEngine({ eventStore }),
-    memory: new StubMemoryInterface(eventStore)
+    memory: new StubMemoryInterface(eventStore),
+    recovery,
+    loopDetector: new LoopDetector(),
+    qualityAuditor
   });
   const app = Fastify({
     logger: fastifyLoggerOptions({
@@ -146,6 +167,30 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       ...(options.logStream === undefined ? {} : { stream: options.logStream })
     })
   });
+  let daemonState: DaemonRuntimeState = options.startupRecovery === false ? "ready" : "starting";
+  let startupRecoveryStarted = false;
+  const startupRecoveryCheckpoints = new StartupRecoveryCheckpointStore(paths, persistenceKeys);
+
+  const startStartupRecovery = (): void => {
+    if (options.startupRecovery === false || startupRecoveryStarted) {
+      return;
+    }
+
+    startupRecoveryStarted = true;
+    daemonState = "recovering";
+    void runStartupRecovery({
+      events: toolEvents,
+      toolRuntime,
+      checkpoints: startupRecoveryCheckpoints,
+      logger: app.log
+    }).catch((error) => {
+      app.log.error(error, "startup recovery failed");
+    }).finally(() => {
+      daemonState = "ready";
+    });
+  };
+
+  app.server.once("listening", startStartupRecovery);
 
   app.addHook("onRequest", async (request, reply) => {
     if (!tokensEqual(bearerTokenFromRequest(request), authToken)) {
@@ -206,6 +251,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       service: "operator-dock-daemon",
       version: "0.1.0",
       database: "ok",
+      state: daemonState,
       build,
       timestamp: new Date().toISOString()
     });

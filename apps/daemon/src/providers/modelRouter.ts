@@ -341,7 +341,10 @@ export class ModelRouter {
 
   selectProvider(purpose: ModelPurpose, explicitProviderId?: ProviderId): ProviderConfig {
     if (explicitProviderId !== undefined) {
-      const explicit = this.providers.find((provider) => provider.id === explicitProviderId && provider.enabled);
+      const explicit = this.providers.find((provider) =>
+        provider.id === explicitProviderId
+        && (provider.enabled || explicitProviderId === "mock")
+      );
       if (explicit === undefined) {
         throw new Error(`Provider ${explicitProviderId} is not enabled.`);
       }
@@ -367,6 +370,28 @@ export class MockModelProviderAdapter implements ModelProviderAdapter {
   constructor(readonly providerId: ProviderId) {}
 
   async chat(request: ModelRouterChatRequest, model: string): Promise<ModelRouterChatResponse> {
+    const delay = mockDelayMs(request);
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    if (this.providerId === "mock" && request.purpose === "planner") {
+      const taskId = taskIdFor(request);
+      return {
+        providerId: this.providerId,
+        providerName: this.providerId,
+        model,
+        modelVersion: model,
+        promptVersion: request.promptVersion,
+        message: {
+          role: "assistant",
+          content: JSON.stringify(mockPlan(taskId, request.messages.at(-1)?.content ?? "Mock task")),
+          toolCalls: []
+        },
+        usage: {}
+      };
+    }
+
     return {
       providerId: this.providerId,
       providerName: this.providerId,
@@ -381,6 +406,113 @@ export class MockModelProviderAdapter implements ModelProviderAdapter {
       usage: {}
     };
   }
+}
+
+function mockDelayMs(request: ModelRouterChatRequest): number {
+  const content = request.messages.map((message) => message.content).join("\n");
+  const match = content.match(/\[mock-delay-ms=(\d{1,5})]/);
+  if (match?.[1] === undefined) {
+    return 0;
+  }
+  return Math.min(Number.parseInt(match[1], 10), 10_000);
+}
+
+function mockPlan(taskId: string, taskGoal: string): JsonValue {
+  const variant = mockPlanVariant(taskGoal);
+  return {
+    schemaVersion: 1,
+    planId: `mock-plan-${taskId}`,
+    taskId,
+    revision: 0,
+    parentPlanId: null,
+    taskGoal,
+    assumptions: [],
+    constraints: [],
+    successCriteria: [{
+      id: "success",
+      description: "The mock step completed.",
+      predicate: { op: "always" },
+      requiresEvidence: true
+    }],
+    doneConditions: [{
+      id: "done",
+      description: "The mock task has evidence.",
+      predicate: { op: "always" },
+      requiresEvidence: true
+    }],
+    forbiddenActions: [],
+    expectedStepEstimate: 1,
+    risks: [],
+    expectedArtifacts: [],
+    openQuestions: [],
+    steps: [mockStep(taskGoal, variant)]
+  };
+}
+
+function mockPlanVariant(taskGoal: string): "sleep" | "safety-block" | "approval" {
+  if (taskGoal.includes("[mock-plan=safety-block]")) {
+    return "safety-block";
+  }
+  if (taskGoal.includes("[mock-plan=approval]")) {
+    return "approval";
+  }
+  return "sleep";
+}
+
+function mockStep(taskGoal: string, variant: "sleep" | "safety-block" | "approval"): Record<string, JsonValue> {
+  const base = {
+    stepId: "S1",
+    selectedToolVersion: "1",
+    successCheck: { op: "always" },
+    fallbackStrategies: [],
+    estimatedValue: 1,
+    dependsOn: [],
+    produces: ["mock-evidence"],
+    consumes: [],
+    taint: false
+  };
+
+  if (variant === "safety-block") {
+    return {
+      ...base,
+      intent: "Attempt a blocked command for recovery audit.",
+      selectedTool: "shell.exec",
+      toolInput: { command: "rm", args: ["-rf", "/"] },
+      expectedObservation: "The safety governor blocks the command.",
+      riskLevel: "critical",
+      rationale: "Deterministic safety-block plan for recovery audit."
+    };
+  }
+
+  if (variant === "approval") {
+    return {
+      ...base,
+      intent: "Request approval for a delayed shell command.",
+      selectedTool: "shell.run",
+      toolInput: { command: "sleep 5", timeoutMs: 10_000 },
+      expectedObservation: "The command waits for approval.",
+      riskLevel: "medium",
+      rationale: "Deterministic approval plan for recovery audit."
+    };
+  }
+
+  return {
+    ...base,
+    intent: "Run deterministic mock wait.",
+    selectedTool: "sleep.wait",
+    toolInput: { durationMs: mockStepDelayMs(taskGoal) },
+    expectedObservation: "The wait completes.",
+    riskLevel: "low",
+    rationale: "Deterministic mock plan for eval and audit mode."
+  };
+}
+
+function mockStepDelayMs(taskGoal: string): number {
+  const match = taskGoal.match(/\[mock-step-delay-ms=(\d{1,5})]/);
+  if (match?.[1] === undefined) {
+    return 0;
+  }
+  return Math.min(Number.parseInt(match[1], 10), 10_000);
 }
 
 export class FixtureMockModelProviderAdapter implements ModelProviderAdapter {

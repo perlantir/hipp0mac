@@ -94,3 +94,35 @@ one to fail with `TOOL_DENIED` before execution. The corpus covers:
 
 The list lives in `phase5b-safety-audit.mjs` as
 `maliciousShellExecInputs` so the exact gate inputs are reviewable.
+
+## Phase 5D Recovery Crash Audit
+
+Run after rebuilding and relaunching the Mac app:
+
+```sh
+node scripts/manual-audit/phase5d-recovery-crash-audit.mjs
+```
+
+Optional flags:
+
+```sh
+node scripts/manual-audit/phase5d-recovery-crash-audit.mjs \
+  --daemon-url http://127.0.0.1:4768 \
+  --workspace /tmp/operator-dock-phase5d-manual-audit-workspace \
+  --kill-delay-ms 100 \
+  --approval-kill-delay-ms 25
+```
+
+What it verifies against the real supervised daemon:
+
+- Agent loop crash while a delayed mock planner call is in flight, then
+  rerun completes and replay reports zero model/tool re-execution.
+- Agent loop crash while a delayed step is in flight near the
+  verification boundary, then rerun completes and replay remains inert.
+- Agent loop crash on a safety-block recovery path, then rerun fails the
+  step without executing the dangerous command.
+- Agent loop crash with a consumed `shell.run` approval in flight, then
+  rerun requests a fresh approval instead of reusing the consumed one.
+
+The script uses the Phase 5D explicit mock planner mode only for
+deterministic audit tasks; production provider settings are not changed.

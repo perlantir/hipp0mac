@@ -24,6 +24,8 @@ final class AppStore {
   var workspaceFiles: [FileEntry] = []
   var fileExplorerPath = "."
   var pendingApprovals: [ToolApproval] = []
+  var daemonLogPath = DaemonSupervisor.defaultLogFilePath
+  var daemonSupervisorError: String?
   var commandText = ""
   var isCreatingTestTask = false
   var isRefreshingProviders = false
@@ -37,6 +39,8 @@ final class AppStore {
   private let client: DaemonClient
   private let credentialStore: ProviderCredentialStore
   private var eventStreamTask: _Concurrency.Task<Void, Never>?
+  private var healthPollTask: _Concurrency.Task<Void, Never>?
+  private var supervisorFatalObserver: NSObjectProtocol?
 
   init(client: DaemonClient, credentialStore: ProviderCredentialStore = ProviderCredentialStore()) {
     self.client = client
@@ -44,12 +48,18 @@ final class AppStore {
   }
 
   func start() {
+    observeSupervisorFatalErrors()
+
     guard eventStreamTask == nil else {
       return
     }
 
     eventStreamTask = _Concurrency.Task {
       await listenForEvents()
+    }
+
+    healthPollTask = _Concurrency.Task {
+      await pollHealth()
     }
 
     _Concurrency.Task {
@@ -61,9 +71,35 @@ final class AppStore {
     }
   }
 
+  private func observeSupervisorFatalErrors() {
+    guard supervisorFatalObserver == nil else {
+      return
+    }
+
+    supervisorFatalObserver = NotificationCenter.default.addObserver(
+      forName: .daemonSupervisorFatalError,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      let message = notification.userInfo?[DaemonSupervisorNotificationKey.message] as? String
+      let logPath = notification.userInfo?[DaemonSupervisorNotificationKey.logFilePath] as? String
+      Task { @MainActor [weak self] in
+        self?.daemonSupervisorError = message ?? "Daemon failed to start."
+        if let logPath {
+          self?.daemonLogPath = logPath
+        }
+        self?.connectionState = .disconnected
+      }
+    }
+  }
+
   func refreshHealth() async {
     do {
       health = try await client.health()
+      connectionState = .connected
+      if health?.state == .ready {
+        daemonSupervisorError = nil
+      }
       lastError = nil
     } catch {
       connectionState = .disconnected
@@ -288,6 +324,18 @@ final class AppStore {
     } catch {
       connectionState = .disconnected
       lastError = error.localizedDescription
+    }
+  }
+
+  private func pollHealth() async {
+    while !Task.isCancelled {
+      await refreshHealth()
+
+      do {
+        try await Task.sleep(for: .seconds(2))
+      } catch {
+        return
+      }
     }
   }
 

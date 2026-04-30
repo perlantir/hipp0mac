@@ -3,6 +3,7 @@ import type {
   AgentStep,
   JsonValue,
   ProviderId,
+  StepVerification,
   ToolResult
 } from "@operator-dock/protocol";
 import { AgentPlanSchema } from "@operator-dock/protocol";
@@ -10,6 +11,7 @@ import type { EventStore } from "../persistence/eventStore.js";
 import type { CheckpointStore } from "../persistence/checkpointStore.js";
 import { uuidv7 } from "../persistence/uuidv7.js";
 import type { ModelRouter } from "../providers/modelRouter.js";
+import { reconcileModelCallOrphans } from "../providers/modelRouter.js";
 import type { ToolManifestRegistry } from "../tools/runtime/manifestRegistry.js";
 import type { ContextEngine } from "./contextEngine.js";
 import type { StubMemoryInterface } from "./memory.js";
@@ -18,6 +20,9 @@ import { HeuristicStepEstimator, validatePlan } from "./planner.js";
 import { replayEventSlice, type ReplayResult } from "./replay.js";
 import { selectNextStep } from "./stepSelection.js";
 import { detectPromptInjection } from "./untrustedData.js";
+import type { LoopDetector } from "./loopDetection.js";
+import type { QualityAuditor } from "./quality.js";
+import type { RecoveryManager } from "./recoveryManager.js";
 import {
   combineDoubleVerification,
   requiresDoubleVerification,
@@ -40,11 +45,15 @@ export interface AgentLoopDependencies {
   memory: StubMemoryInterface;
   estimator?: HeuristicStepEstimator;
   plannerProviderId?: ProviderId;
+  recovery?: RecoveryManager;
+  loopDetector?: LoopDetector;
+  qualityAuditor?: QualityAuditor;
 }
 
 export interface AgentLoopTask {
   taskId: string;
   goal: string;
+  plannerProviderId?: ProviderId;
 }
 
 export type AgentLoopStatus =
@@ -91,6 +100,7 @@ export class AgentLoop {
   async runIteration(task: AgentLoopTask): Promise<AgentLoopIterationResult> {
     this.dependencies.eventStore.append(task.taskId, "agent_iteration_started", {});
     await this.dependencies.toolRuntime.reconcileTask(task.taskId);
+    reconcileModelCallOrphans(task.taskId, this.dependencies.eventStore);
 
     let state = this.reconstruct(task.taskId);
     if (this.isTerminal(task.taskId)) {
@@ -170,6 +180,11 @@ export class AgentLoop {
         reason: "injection_detected",
         stepId: step.stepId
       });
+      this.dependencies.recovery?.decide(task.taskId, {
+        stepId: step.stepId,
+        injectionDetected: true
+      });
+      this.finalizeQuality(task.taskId, task.goal);
       return { status: "halted", selectedStepId: step.stepId };
     }
 
@@ -180,24 +195,62 @@ export class AgentLoop {
       evidenceRefs
     });
 
-    const finalVerification = requiresDoubleVerification(step, manifest)
-      ? combineDoubleVerification([
-        verification,
-        verifyStep(step, manifest, {
-          output: toolResult.output ?? null,
-          evidenceRefs
-        })
-      ])
-      : verification;
+    let finalVerification: StepVerification;
+    try {
+      finalVerification = requiresDoubleVerification(step, manifest)
+        ? combineDoubleVerification([
+          verification,
+          verifyStep(step, manifest, {
+            output: toolResult.output ?? null,
+            evidenceRefs
+          })
+        ])
+        : verification;
+    } catch (error) {
+      this.dependencies.recovery?.decide(task.taskId, {
+        stepId: step.stepId,
+        verifierDisagreement: true,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.dependencies.eventStore.append(task.taskId, "plan_invalidated", {
+        stepId: step.stepId,
+        reason: "Verifier disagreement halted the step."
+      });
+      return { status: "step_failed", selectedStepId: step.stepId };
+    }
     this.dependencies.eventStore.append(task.taskId, "step_verification", {
       stepId: step.stepId,
       ...finalVerification
     });
 
     if (!finalVerification.passed) {
+      this.dependencies.recovery?.decide(task.taskId, {
+        stepId: step.stepId,
+        toolOk: toolResult.ok,
+        toolStatus: toolResult.status,
+        ...(toolResult.error?.code === undefined ? {} : { errorCode: toolResult.error.code }),
+        ...(toolResult.error?.message === undefined ? {} : { errorMessage: toolResult.error.message }),
+        noEffect: toolResult.ok
+      });
       this.dependencies.eventStore.append(task.taskId, "plan_invalidated", {
         stepId: step.stepId,
         reason: toolResult.error?.message ?? "Step verification failed."
+      });
+      return { status: "step_failed", selectedStepId: step.stepId };
+    }
+
+    const loop = this.dependencies.loopDetector?.analyze(this.dependencies.eventStore.readAll(task.taskId).map((event) => ({
+      eventType: event.eventType,
+      payload: event.payload
+    })));
+    if (loop?.failureType !== null && loop?.failureType !== undefined) {
+      this.dependencies.recovery?.decide(task.taskId, {
+        stepId: step.stepId,
+        loopFailureType: loop.failureType
+      });
+      this.dependencies.eventStore.append(task.taskId, "plan_invalidated", {
+        stepId: step.stepId,
+        reason: loop.failureType
       });
       return { status: "step_failed", selectedStepId: step.stepId };
     }
@@ -223,9 +276,10 @@ export class AgentLoop {
   }
 
   private async generatePlan(task: AgentLoopTask, mode: "generated" | "revised"): Promise<AgentPlan> {
+    const plannerProviderId = task.plannerProviderId ?? this.dependencies.plannerProviderId;
     const response = await this.dependencies.modelRouter.chatStructured({
       purpose: "planner",
-      ...(this.dependencies.plannerProviderId === undefined ? {} : { providerId: this.dependencies.plannerProviderId }),
+      ...(plannerProviderId === undefined ? {} : { providerId: plannerProviderId }),
       promptVersion: PROMPT_VERSIONS.planner,
       messages: [
         { role: "system", content: PLANNER_PROMPT },
@@ -308,9 +362,16 @@ export class AgentLoop {
       this.dependencies.eventStore.append(task.taskId, "loop_completed", {
         status: "completed"
       });
+      this.finalizeQuality(task.taskId, task.goal);
       return { status: "completed" };
     }
 
+    this.dependencies.recovery?.decide(task.taskId, {
+      stepId: "goal",
+      noEffect: true,
+      lowQualityPath: verification.qualityConcerns.length > 0
+    });
+    this.finalizeQuality(task.taskId, task.goal);
     return { status: "step_failed" };
   }
 
@@ -376,6 +437,18 @@ export class AgentLoop {
     this.dependencies.checkpoints.writeCheckpoint(taskId, lastEventId, {
       reason,
       replay: this.replay(taskId).derivedState as unknown as JsonValue
+    });
+  }
+
+  private finalizeQuality(taskId: string, taskType: string): void {
+    const alreadyFinalized = this.dependencies.eventStore.readAll(taskId).some((event) => event.eventType === "quality_report_final");
+    if (alreadyFinalized) {
+      return;
+    }
+
+    this.dependencies.qualityAuditor?.generateAndPersist({
+      taskId,
+      taskType
     });
   }
 }

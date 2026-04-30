@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Writable } from "node:stream";
@@ -7,6 +8,8 @@ import Database from "better-sqlite3-multiple-ciphers";
 import { CreateTaskResponseSchema, HealthResponseSchema } from "@operator-dock/protocol";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/connection.js";
+import { EventStore } from "../src/persistence/eventStore.js";
+import { OperatorDockPaths } from "../src/persistence/paths.js";
 import { buildApp } from "../src/server.js";
 import { EventBus } from "../src/websocket/eventBus.js";
 import { authHeaders, authStore, persistenceKeyManager } from "./harness.js";
@@ -52,8 +55,55 @@ describe("daemon server", () => {
     expect(response.statusCode).toBe(200);
     const health = HealthResponseSchema.parse(response.json());
     expect(health.status).toBe("ok");
+    expect(health.state).toBe("starting");
     expect(health.build.gitCommit).toMatch(/^[0-9a-f]{40}$|^unknown$/);
     expect(health.build.serverFileMtimeMs).toBeGreaterThan(0);
+  });
+
+  it("serves health while startup recovery completes in the background", async () => {
+    const config = testConfig();
+    const keyManager = persistenceKeyManager();
+    const keys = await keyManager.loadOrCreateKeys();
+    const paths = new OperatorDockPaths(config.stateRoot);
+    paths.createLayout();
+    const eventStore = new EventStore(paths, keys);
+    const taskId = "startup-recovery-health";
+    eventStore.append(taskId, "tool_call_intended", {
+      executionId: "startup-recovery-execution",
+      toolName: "sleep.wait",
+      toolVersion: "1",
+      idempotencyKey: null,
+      resolvedInput: { durationMs: 150 },
+      safetyDecision: { eventId: "synthetic", decision: "allow" },
+      scopeChecks: [],
+      timeoutMs: 5000,
+      lockEventId: "synthetic-lock"
+    });
+
+    const app = await buildApp({
+      config,
+      authTokenStore: authStore(),
+      persistenceKeys: keys,
+      logger: false
+    });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${address.port}/health`;
+
+    const recoveringResponse = await fetch(url, { headers: authHeaders() });
+    const recoveringHealth = HealthResponseSchema.parse(await recoveringResponse.json());
+    expect(recoveringHealth.state).toBe("recovering");
+
+    await waitFor(async () => {
+      const response = await fetch(url, { headers: authHeaders() });
+      const health = HealthResponseSchema.parse(await response.json());
+      return health.state === "ready";
+    });
+
+    await app.close();
+
+    expect(eventStore.readAll(taskId).some((event) => event.eventType === "tool_call_result")).toBe(true);
+    expect(existsSync(paths.startupRecoveryCheckpoint())).toBe(true);
   });
 
   it("creates a task and emits a live event", async () => {
@@ -258,4 +308,17 @@ class CapturingWritable extends Writable {
     this.output += chunk.toString("utf8");
     callback();
   }
+}
+
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 2_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error("Timed out waiting for predicate.");
 }

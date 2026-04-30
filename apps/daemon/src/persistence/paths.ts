@@ -22,6 +22,7 @@ export class OperatorDockPaths {
   readonly configRoot: string;
   readonly locksRoot: string;
   readonly logsRoot: string;
+  readonly recoveryRoot: string;
   readonly idempotencyRoot: string;
   readonly toolTombstonesRoot: string;
   readonly databasePath: string;
@@ -35,6 +36,7 @@ export class OperatorDockPaths {
     this.configRoot = join(root, "config");
     this.locksRoot = join(root, "locks");
     this.logsRoot = join(root, "logs");
+    this.recoveryRoot = join(root, "recovery");
     this.idempotencyRoot = join(root, "idempotency");
     this.toolTombstonesRoot = join(root, "tool-tombstones");
     this.databasePath = join(root, "operator-dock.sqlite");
@@ -60,6 +62,7 @@ export class OperatorDockPaths {
       this.configRoot,
       this.locksRoot,
       this.logsRoot,
+      this.recoveryRoot,
       this.idempotencyRoot,
       this.toolTombstonesRoot
     ]) {
@@ -81,6 +84,10 @@ export class OperatorDockPaths {
 
   lockFile(taskId: string): string {
     return join(this.locksRoot, `${safeId(taskId)}.lock`);
+  }
+
+  startupRecoveryCheckpoint(): string {
+    return join(this.recoveryRoot, "startup-recovery.checkpoint");
   }
 }
 

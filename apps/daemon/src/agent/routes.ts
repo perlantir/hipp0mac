@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { ProviderIdSchema } from "@operator-dock/protocol";
 import { ApiError } from "../errors.js";
 import type { TaskRepository } from "../tasks/taskRepository.js";
 import type { AgentLoop } from "./agentLoop.js";
@@ -11,6 +12,7 @@ export interface AgentLoopRouteDependencies {
 
 const AgentLoopRunInputSchema = z.object({
   goal: z.string().trim().min(1).optional(),
+  plannerProviderId: ProviderIdSchema.optional(),
   maxIterations: z.number().int().positive().max(100).default(1)
 });
 
@@ -23,7 +25,11 @@ export async function registerAgentLoopRoutes(
     const input = AgentLoopRunInputSchema.parse(request.body ?? {});
     const goal = input.goal ?? taskGoal(dependencies.tasks, taskId);
     return {
-      result: await dependencies.loop.runIteration({ taskId, goal })
+      result: await dependencies.loop.runIteration({
+        taskId,
+        goal,
+        ...(input.plannerProviderId === undefined ? {} : { plannerProviderId: input.plannerProviderId })
+      })
     };
   });
 
@@ -32,7 +38,11 @@ export async function registerAgentLoopRoutes(
     const input = AgentLoopRunInputSchema.parse(request.body ?? {});
     const goal = input.goal ?? taskGoal(dependencies.tasks, taskId);
     return {
-      result: await dependencies.loop.runUntilBlockedOrComplete({ taskId, goal }, input.maxIterations)
+      result: await dependencies.loop.runUntilBlockedOrComplete({
+        taskId,
+        goal,
+        ...(input.plannerProviderId === undefined ? {} : { plannerProviderId: input.plannerProviderId })
+      }, input.maxIterations)
     };
   });
 

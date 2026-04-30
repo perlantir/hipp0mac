@@ -771,6 +771,201 @@ export const GoalVerificationSchema = z.object({
   qualityConcerns: z.array(z.string())
 });
 
+export const RecoveryFailureTypeSchema = z.enum([
+  "validation_error",
+  "tool_failure",
+  "no_effect",
+  "context_loss",
+  "model_error",
+  "auth_required",
+  "timeout",
+  "safety_block",
+  "injection_detected",
+  "repeated_step_loop",
+  "no_progress_loop",
+  "low_quality_path",
+  "excessive_user_interruption",
+  "schema_version_mismatch",
+  "verifier_disagreement",
+  "unknown"
+]);
+
+export const RecoveryStrategySchema = z.enum([
+  "retry_same_tool",
+  "retry_modified_input",
+  "switch_tool",
+  "re_evaluate_context",
+  "replan_subgraph",
+  "ask_user",
+  "fail_gracefully",
+  "stop_for_safety"
+]);
+
+export const RecoveryClassificationSchema = z.object({
+  failureType: RecoveryFailureTypeSchema,
+  classifiedReason: z.string().trim().min(1),
+  confidence: z.number().min(0).max(1),
+  sourceEventId: EventRefSchema.nullable()
+});
+
+export const RecoveryDecisionSchema = z.object({
+  failureType: RecoveryFailureTypeSchema,
+  classifiedReason: z.string().trim().min(1),
+  strategy: RecoveryStrategySchema,
+  retryCount: z.number().int().nonnegative(),
+  capReached: z.boolean(),
+  nextStepOverride: z.string().trim().min(1).nullable(),
+  escalationRequired: z.boolean(),
+  rationale: z.string().trim().min(1)
+});
+
+export const QualityMetricValueSchema = z.union([z.number().min(0).max(1), z.literal("N/A")]);
+
+export const QualityMetricSetSchema = z.object({
+  stepEfficiency: QualityMetricValueSchema,
+  toolEfficiency: QualityMetricValueSchema,
+  recoveryEfficiency: QualityMetricValueSchema,
+  contextEfficiency: QualityMetricValueSchema,
+  userInterruptionScore: QualityMetricValueSchema,
+  redundancyScore: QualityMetricValueSchema,
+  completionQuality: QualityMetricValueSchema
+});
+
+export const QualityWeightSetSchema = z.object({
+  completionQuality: z.number().min(0).max(1),
+  stepEfficiency: z.number().min(0).max(1),
+  toolEfficiency: z.number().min(0).max(1),
+  recoveryEfficiency: z.number().min(0).max(1),
+  contextEfficiency: z.number().min(0).max(1),
+  redundancyScore: z.number().min(0).max(1),
+  userInterruptionScore: z.number().min(0).max(1)
+});
+
+export const RecommendedFixSchema = z.object({
+  targetComponent: z.enum([
+    "planner",
+    "executor",
+    "verifier",
+    "recovery",
+    "context",
+    "safety",
+    "tool",
+    "memory",
+    "model_adapter",
+    "other"
+  ]),
+  changeType: z.enum([
+    "prompt_change",
+    "predicate_change",
+    "manifest_change",
+    "threshold_change",
+    "logic_change",
+    "new_tool",
+    "other"
+  ]),
+  rationale: z.string().trim().min(1),
+  evidenceRefs: z.array(EventRefSchema).min(1)
+});
+
+export const QualityReportSchema = z.object({
+  schemaVersion: z.literal(1),
+  taskId: z.string().trim().min(1),
+  generatedAt: isoDateTimeSchema,
+  completed: z.boolean(),
+  safetyViolation: z.boolean(),
+  metrics: QualityMetricSetSchema,
+  weights: QualityWeightSetSchema,
+  overallScore: z.number().min(0).max(1),
+  counts: z.object({
+    totalSteps: z.number().int().nonnegative(),
+    expectedStepEstimate: z.number().int().positive().nullable(),
+    repeatedStepCount: z.number().int().nonnegative(),
+    unnecessaryToolCallCount: z.number().int().nonnegative(),
+    unnecessaryUserQuestionCount: z.number().int().nonnegative(),
+    failedToolCallCount: z.number().int().nonnegative(),
+    recoveryAttemptCount: z.number().int().nonnegative(),
+    injectionDetectionCount: z.number().int().nonnegative(),
+    doubleVerificationCount: z.number().int().nonnegative(),
+    verifierDisagreementCount: z.number().int().nonnegative()
+  }),
+  rootCauseIfLowScore: z.string().trim().min(1).nullable(),
+  recommendedFixes: z.array(RecommendedFixSchema),
+  qualityConcerns: z.array(z.string())
+});
+
+export const FinalOutputArtifactSchema = z.object({
+  id: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+  kind: ArtifactKindSchema,
+  sizeBytes: z.number().int().nonnegative(),
+  hash: z.string().trim().min(1)
+});
+
+export const FinalOutputCheckSchema = z.object({
+  criterion: z.string().trim().min(1),
+  met: z.boolean(),
+  evidenceRefs: z.array(EventRefSchema)
+});
+
+export const FinalOutputSchema = z.object({
+  schemaVersion: z.literal(1),
+  taskId: z.string().trim().min(1),
+  generatedAt: isoDateTimeSchema,
+  summary: z.string(),
+  artifacts: z.array(FinalOutputArtifactSchema),
+  successCriteria: z.array(FinalOutputCheckSchema),
+  doneConditions: z.array(z.object({
+    condition: z.string().trim().min(1),
+    met: z.boolean(),
+    evidenceRefs: z.array(EventRefSchema)
+  })),
+  limitations: z.array(z.string()),
+  skippedItems: z.array(z.object({
+    item: z.string().trim().min(1),
+    reason: z.string().trim().min(1)
+  })),
+  qualityReport: QualityReportSchema,
+  nextSuggestedActions: z.array(z.string())
+});
+
+export const FailureOutputSchema = z.object({
+  schemaVersion: z.literal(1),
+  taskId: z.string().trim().min(1),
+  generatedAt: isoDateTimeSchema,
+  partialSummary: z.string(),
+  partialArtifacts: z.array(FinalOutputArtifactSchema),
+  successCriteria: z.array(FinalOutputCheckSchema),
+  doneConditions: z.array(z.object({
+    condition: z.string().trim().min(1),
+    met: z.boolean(),
+    evidenceRefs: z.array(EventRefSchema)
+  })),
+  failedSteps: z.array(z.object({
+    stepId: z.string().trim().min(1),
+    reason: z.string().trim().min(1),
+    evidenceRefs: z.array(EventRefSchema)
+  })),
+  qualityReport: QualityReportSchema,
+  recommendedNextActions: z.array(z.string())
+});
+
+export const EvalTaskResultSchema = z.object({
+  taskId: z.string().trim().min(1),
+  passed: z.boolean(),
+  reasons: z.array(z.string()),
+  qualityReport: QualityReportSchema,
+  pairedTraceDiff: jsonObjectSchema.nullable()
+});
+
+export const EvalAggregateReportSchema = z.object({
+  schemaVersion: z.literal(1),
+  generatedAt: isoDateTimeSchema,
+  totalTasks: z.number().int().nonnegative(),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  results: z.array(EvalTaskResultSchema)
+});
+
 export const ContextItemProvenanceSchema = z.object({
   source: z.string().trim().min(1),
   eventRef: EventRefSchema,
@@ -897,6 +1092,7 @@ export const HealthResponseSchema = z.object({
   service: z.literal("operator-dock-daemon"),
   version: z.string(),
   database: z.literal("ok"),
+  state: z.enum(["starting", "recovering", "ready"]),
   build: z.object({
     gitCommit: z.string().trim().min(1),
     serverFileMtimeMs: z.number().nonnegative(),
@@ -919,6 +1115,7 @@ export type TaskCreateInput = z.infer<typeof TaskCreateInputSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 export type Artifact = z.infer<typeof ArtifactSchema>;
 export type ModelMessage = z.infer<typeof ModelMessageSchema>;
 export type OperatorEvent = z.infer<typeof OperatorEventSchema>;
@@ -985,6 +1182,18 @@ export type AgentStep = z.infer<typeof AgentStepSchema>;
 export type AgentPlan = z.infer<typeof AgentPlanSchema>;
 export type StepVerification = z.infer<typeof StepVerificationSchema>;
 export type GoalVerification = z.infer<typeof GoalVerificationSchema>;
+export type RecoveryFailureType = z.infer<typeof RecoveryFailureTypeSchema>;
+export type RecoveryStrategy = z.infer<typeof RecoveryStrategySchema>;
+export type RecoveryClassification = z.infer<typeof RecoveryClassificationSchema>;
+export type RecoveryDecision = z.infer<typeof RecoveryDecisionSchema>;
+export type QualityMetricValue = z.infer<typeof QualityMetricValueSchema>;
+export type RecommendedFix = z.infer<typeof RecommendedFixSchema>;
+export type QualityReport = z.infer<typeof QualityReportSchema>;
+export type FinalOutputArtifact = z.infer<typeof FinalOutputArtifactSchema>;
+export type FinalOutput = z.infer<typeof FinalOutputSchema>;
+export type FailureOutput = z.infer<typeof FailureOutputSchema>;
+export type EvalTaskResult = z.infer<typeof EvalTaskResultSchema>;
+export type EvalAggregateReport = z.infer<typeof EvalAggregateReportSchema>;
 export type ContextPack = z.infer<typeof ContextPackSchema>;
 export type ContextPackItem = z.infer<typeof ContextPackItemSchema>;
 export type MemoryRef = z.infer<typeof MemoryRefSchema>;

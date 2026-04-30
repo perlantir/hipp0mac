@@ -80,6 +80,73 @@ Latest local verification before pushing:
 - Production Keychain access class enforcement is represented in the Node abstraction and unit harness. The current production Node implementation uses the macOS `security` CLI, matching the existing daemon credential pattern, but the CLI does not expose `kSecAttrAccessibleAfterFirstUnlock`. A native Security framework bridge or addon is needed to enforce that attribute from Node without reintroducing the Swift helper.
 - LaunchAgent supervision is deliberately not implemented in Phase 5A. Mac-app supervision covers app-open durability now; daemon-while-app-closed scheduling remains a later product decision.
 
+## POST-PHASE-5D AMENDMENT: Supervisor Restart-Storm Hardening
+
+Date: 2026-04-30<br>
+Branch: `phase-5d/recovery-quality`<br>
+PR: https://github.com/perlantir/hipp0mac/pull/2
+
+Phase 5D manual crash auditing exposed a gap in the original Phase 5A
+supervisor claim. Phase 5A verified a narrow crash case: one daemon kill
+after the daemon had already started, with enough time for the replacement
+process to become healthy before the next check. It did not verify a daemon
+that legitimately needs tens of seconds to recover before `/health` is
+`ready`, nor back-to-back startup crashes caused by poisoned recovery state.
+
+What the original Phase 5A test missed:
+
+- Crash during the agent-loop verification/tool boundary, while orphan
+  reconciliation and task locks were still on disk.
+- Startup recovery running before Fastify was listening, which made the
+  daemon unavailable to the supervisor health check.
+- Restart-storm behavior: `startupGraceSeconds = 3`,
+  `healthFailureThreshold = 1`, and constant `0.5s` respawn delay caused
+  rapid respawns instead of patient recovery.
+- Supervisor stdout/stderr redirection to `/dev/null`, which hid startup
+  and recovery logs during the incident.
+- A fatal surfaced UI state after repeated failures; the app kept running
+  while the daemon failed repeatedly.
+- The dev app bundle JSON generated before Phase 5D did not include the
+  new non-optional `DaemonSupervisor.Configuration` fields. Once the
+  hardened supervisor fields were added, old JSON could fail to decode and
+  the app could fall back to environment-derived configuration instead of
+  the bundled daemon config.
+- The real-daemon supervisor tests used the production default daemon log
+  path unless each test supplied an override, which polluted
+  `~/Library/Logs/OperatorDock/daemon.log` and made test evidence harder to
+  separate from user-run daemon evidence.
+- `script/build_and_run.sh` rebuilt only the daemon workspace. That left
+  `packages/protocol/dist` and `packages/shared/dist` stale in local app
+  launches, allowing the rebuilt daemon server to use a health schema that
+  did not match the dist package loaded at runtime.
+
+Correction landed in Phase 5D as a Phase 5A amendment:
+
+- Daemon stdout/stderr now go to
+  `~/Library/Logs/OperatorDock/daemon.log`, rotate at 10 MB, and keep the
+  last 5 rotated files. See `docs/phase-5a/LOGGING.md`.
+- Supervisor defaults are now `startupGraceSeconds = 60`,
+  `healthFailureThreshold = 5`, exponential backoff starting at 1s and
+  capped at 30s, and fatal stop after 10 failures within 5 minutes.
+- The Mac app surfaces fatal supervisor errors and the daemon log path in
+  Settings diagnostics.
+- New Swift tests cover log capture/rotation and bounded restart behavior
+  with fatal error notification.
+- `DaemonSupervisor.Configuration` now decodes old bundle JSON
+  backward-compatibly, using the hardened Phase 5D defaults for missing
+  fields.
+- `script/build_and_run.sh` now writes the full hardened daemon config,
+  rebuilds protocol, shared, and daemon workspaces together, and performs a
+  launch smoke check that requires `/health` on `127.0.0.1:4768` to return
+  HTTP 200 with build metadata matching the freshly built daemon.
+- Real-daemon supervisor tests now pass test-specific `logFilePath` values
+  so test subprocess stdout/stderr stays out of the production daemon log.
+
+This amendment does not mark the Phase 5D real-daemon audit complete. The
+human owner still needs to rerun the Phase 5D manual audit scenarios against
+the hardened supervisor and recovery path before the draft PR can be marked
+ready.
+
 ## Carry Forward
 
 - Phase 5B: tool manifests, idempotency keys, canonical safety decision events, and projection tests.

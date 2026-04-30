@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import OperatorDockCore
 
@@ -62,10 +63,10 @@ struct SettingsView: View {
       SectionLabel(title: "Daemon")
 
       HStack(spacing: 16) {
-        StatusBadge(status: store.connectionState == .connected ? .success : .waiting)
+        StatusBadge(status: daemonStatusBadge)
 
         VStack(alignment: .leading, spacing: 4) {
-          Text(store.connectionState.rawValue)
+          Text(store.health?.state.displayName ?? store.connectionState.rawValue)
             .font(.odText(13.5, weight: .medium))
             .foregroundStyle(ODTheme.ColorToken.textPrimary)
 
@@ -84,7 +85,63 @@ struct SettingsView: View {
       }
       .padding(16)
       .odCard()
+
+      if let supervisorError = store.daemonSupervisorError {
+        HStack(alignment: .top, spacing: 12) {
+          Image(systemName: "exclamationmark.triangle")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(ODTheme.ColorToken.waiting)
+            .frame(width: 22)
+
+          Text(supervisorError)
+            .font(.odText(12.5))
+            .foregroundStyle(ODTheme.ColorToken.textSecondary)
+
+          Spacer()
+        }
+        .padding(16)
+        .odCard()
+      }
+
+      HStack(spacing: 12) {
+        Image(systemName: "doc.text.magnifyingglass")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(ODTheme.ColorToken.textSecondary)
+          .frame(width: 22)
+
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Daemon log")
+            .font(.odText(12.5, weight: .medium))
+            .foregroundStyle(ODTheme.ColorToken.textPrimary)
+          Text(store.daemonLogPath)
+            .font(.odMono(11))
+            .foregroundStyle(ODTheme.ColorToken.textTertiary)
+            .lineLimit(2)
+            .textSelection(.enabled)
+        }
+
+        Spacer()
+
+        Button {
+          NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: store.daemonLogPath)])
+        } label: {
+          Image(systemName: "arrow.up.right.square")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(ODTheme.ColorToken.textSecondary)
+        .help("Reveal daemon log")
+      }
+      .padding(16)
+      .odCard()
     }
+  }
+
+  private var daemonStatusBadge: WorkStatus {
+    guard store.connectionState == .connected else {
+      return .waiting
+    }
+
+    return store.health?.state == .ready ? .success : .waiting
   }
 
   private var providerPanel: some View {
@@ -349,4 +406,3 @@ private struct DefaultsRow: View {
     }
   }
 }
-
