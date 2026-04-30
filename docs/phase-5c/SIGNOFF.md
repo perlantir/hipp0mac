@@ -2,7 +2,7 @@
 
 Date: 2026-04-30<br>
 Branch: `phase-5c/agent-loop-verification`<br>
-Status: `In Progress` - planner/context/verifier, property tests, and agent-loop slice are green; real process-kill crash battery remains pending.
+Status: `In Review` - planner/context/verifier, property tests, and agent-loop slice are green; real process-kill crash battery is deferred to Phase 5D.
 
 ## Implementation Checkpoint
 
@@ -18,10 +18,10 @@ Status: `In Progress` - planner/context/verifier, property tests, and agent-loop
 | Criterion | Status | Evidence |
 | --- | --- | --- |
 | All Phase 5A and 5B tests still pass | DONE locally + CI | `npm test` passed locally: protocol 7 tests, daemon 113 tests, SwiftPM 11 tests. The Phase 5C CI workflow also runs `npm test` and passed three consecutive attempts on commit `53bae57`. |
-| Every Phase 5C test above passes in CI on three consecutive runs | PARTIAL | Current implemented Phase 5C slice passed three consecutive GitHub Actions attempts. Remaining full-spec gap: real daemon process-kill crash battery and any tests that depend on it. |
+| Every Phase 5C test above passes in CI on three consecutive runs | DONE for Phase 5C merge scope | Current implemented Phase 5C slice passed three consecutive GitHub Actions attempts. Real daemon process-kill crash battery is deferred to Phase 5D, where recovery manager and failure taxonomy semantics live. |
 | Replay battery: 50 mock tasks replayed 3 times byte-identical | DONE locally + CI | `apps/daemon/test/phase5cBatteries.test.ts` replay battery passed locally and in the Phase 5C CI workflow. |
 | Injection eval: 40+ malicious outputs, zero malicious actions | DONE locally + CI | 42 curated payloads in `state/fixtures/injection-eval/payloads.json`; injection tests passed locally and in CI. |
-| Crash battery: 100 random crash injection points | PARTIAL locally + CI | `apps/daemon/test/phase5cBatteries.test.ts` covers 100 simulated event-log crash prefixes and passed locally/CI. Real daemon process-kill crash battery remains pending. |
+| Crash battery: 100 random crash injection points | DEFERRED to Phase 5D | `apps/daemon/test/phase5cBatteries.test.ts` covers 100 simulated event-log crash prefixes and passed locally/CI. Real daemon process-kill crash battery is deferred to Phase 5D. |
 | Verification audit | DONE locally + CI | `apps/daemon/test/phase5cBatteries.test.ts` verifies zero passing step verifications without evidence and 100% tainted external steps require double verification. |
 | Coverage for new modules + extended ModelRouter >= 90% | DONE locally + CI | `npm run test:coverage -w @operator-dock/daemon` passed locally and in CI. Local coverage: overall statements/lines 92.94%; `apps/daemon/src/agent/**/*.ts` 95.08%; `apps/daemon/src/providers/modelRouter.ts` 92.13%. Report path: `apps/daemon/coverage/index.html`. |
 
@@ -127,17 +127,17 @@ Docs and CI:
 
 ## Known Risks
 
-- Real macOS daemon-kill crash battery is not yet implemented or run. Current crash coverage is simulated by replaying 100 crash-prefix event logs.
+- Real macOS daemon-kill crash battery is deferred to Phase 5D. Current Phase 5C crash coverage is simulated by replaying 100 crash-prefix event logs.
 - The branch has not yet been reviewed by the human owner.
 - GitHub Actions reports a non-fatal warning that `actions/checkout@v4` and `actions/setup-node@v4` currently run on Node.js 20 and will need action/runtime attention before GitHub's 2026 enforcement dates.
 
 ## Carry-Forward Items
 
 - Add a real process-kill crash harness for `mock_task_with_crash` with 20+ kill points and 100 random crash injections.
+- Phase 5D must build a real-daemon crash battery covering: agent loop crash mid-plan-step, agent loop crash mid-verification, agent loop crash during recovery itself, agent loop crash with consumed approvals in flight.
 - Decide whether the Phase 5C CI workflow should remain as a long-term protected workflow or fold into the existing default CI once Phase 5C lands.
 - Phase 5D must preserve the Phase 5C invariants: replay never re-invokes models, replay never re-executes write/external tools, untrusted content is sentinel-wrapped before prompts, and verifiers cannot pass on confidence alone.
 
-## Blocked Items
+## Deferred Items
 
-- `Crash battery: 100 random crash injection points across mock task runs`: BLOCKED for full sign-off until a real daemon process-kill harness exists and is run. Simulated event-log crash-prefix coverage is implemented and passing, but it is not a substitute for killing and resuming the daemon process.
-- `Phase 5C COMPLETE`: BLOCKED until the crash battery above, PR review, and human approval are complete. Phase 5D must not begin until those conditions hold.
+- `Crash battery: 100 random crash injection points across mock task runs`: DEFERRED to Phase 5D by human owner decision. Simulated event-log crash-prefix coverage is implemented and passing for Phase 5C.
