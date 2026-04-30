@@ -18,6 +18,7 @@ import type { DatabaseConnection } from "./db/types.js";
 import { runMigrations } from "./db/migrations.js";
 import { ApiError } from "./errors.js";
 import { EventStore } from "./persistence/eventStore.js";
+import { CheckpointStore } from "./persistence/checkpointStore.js";
 import { LockController } from "./persistence/lockController.js";
 import { OperatorDockPaths } from "./persistence/paths.js";
 import {
@@ -26,8 +27,13 @@ import {
   type PersistenceKeys
 } from "./persistence/persistenceKeys.js";
 import { MacOSKeychainCredentialStore, type CredentialStore } from "./providers/credentialStore.js";
+import { buildDefaultModelRouter, EventStoreModelEventSink } from "./providers/modelRouter.js";
 import { ProviderSettingsRepository } from "./providers/providerSettingsRepository.js";
 import { registerProviderRoutes } from "./providers/routes.js";
+import { AgentLoop } from "./agent/agentLoop.js";
+import { ContextEngine } from "./agent/contextEngine.js";
+import { StubMemoryInterface } from "./agent/memory.js";
+import { registerAgentLoopRoutes } from "./agent/routes.js";
 import {
   bearerTokenFromRequest,
   daemonAuthTokenStoreFromEnv,
@@ -84,6 +90,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const credentialStore = options.credentialStore ?? new MacOSKeychainCredentialStore();
   const authToken = await (options.authTokenStore ?? daemonAuthTokenStoreFromEnv(process.env)).loadOrCreateToken();
   const eventStore = new EventStore(paths, persistenceKeys);
+  const checkpoints = new CheckpointStore(paths, persistenceKeys, eventStore);
   const locks = new LockController(paths, eventStore);
   const build = readDaemonBuildInfo();
 
@@ -121,6 +128,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   toolRuntime.register(httpFetchTool());
   toolRuntime.register(sleepWaitTool());
   await toolRuntime.reconcileAll();
+  const modelRouter = buildDefaultModelRouter(providerSettings.listProviders(), credentialStore, fetch, {
+    eventSink: new EventStoreModelEventSink(eventStore)
+  });
+  const agentLoop = new AgentLoop({
+    eventStore,
+    checkpoints,
+    modelRouter,
+    toolRuntime,
+    manifests,
+    context: new ContextEngine({ eventStore }),
+    memory: new StubMemoryInterface(eventStore)
+  });
   const app = Fastify({
     logger: fastifyLoggerOptions({
       enabled: options.logger ?? true,
@@ -241,6 +260,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await registerToolRuntimeRoutes(app, {
     runtime: toolRuntime,
     approvals: toolApprovals
+  });
+  await registerAgentLoopRoutes(app, {
+    tasks,
+    loop: agentLoop
   });
 
   return app;

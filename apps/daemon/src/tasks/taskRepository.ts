@@ -67,6 +67,14 @@ export class TaskRepository {
 
     return rows.map(mapTaskRow);
   }
+
+  getTask(taskId: string): Task | undefined {
+    const row = this.database
+      .prepare("SELECT * FROM tasks WHERE id = ?")
+      .get(taskId) as TaskRow | undefined;
+
+    return row === undefined ? undefined : mapTaskRow(row);
+  }
 }
 
 function mapTaskRow(row: TaskRow): Task {
