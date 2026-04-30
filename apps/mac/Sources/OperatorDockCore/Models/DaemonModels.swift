@@ -116,7 +116,22 @@ public struct HealthResponse: Decodable, Sendable {
   public let service: String
   public let version: String
   public let database: String
+  public let state: DaemonRuntimeState
   public let timestamp: String
+}
+
+public enum DaemonRuntimeState: String, Codable, Sendable {
+  case starting
+  case recovering
+  case ready
+
+  public var displayName: String {
+    switch self {
+    case .starting: "Daemon starting"
+    case .recovering: "Daemon recovering"
+    case .ready: "Daemon ready"
+    }
+  }
 }
 
 public enum ProviderId: String, Codable, CaseIterable, Identifiable, Sendable {
