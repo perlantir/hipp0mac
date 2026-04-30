@@ -2,6 +2,7 @@
 
 Date: 2026-04-30<br>
 Branch: `phase-5d/recovery-quality`<br>
+PR: https://github.com/perlantir/hipp0mac/pull/2<br>
 Status: `In Progress`
 
 This document will be finalized after the draft PR is opened, the human
@@ -13,7 +14,7 @@ passes three consecutive runs.
 | Criterion | Status | Evidence |
 | --- | --- | --- |
 | All Phase 5A, 5B, 5C tests still pass | DONE locally | `npm test` passed: protocol 7 tests, daemon 131 tests, SwiftPM 11 tests. |
-| Every Phase 5D test passes in CI three consecutive runs | BLOCKED | Requires pushed branch and GitHub Actions runs. |
+| Every Phase 5D test passes in CI three consecutive runs | DONE for current checkpoint | `Phase 5D Recovery Quality` passed four consecutive GitHub Actions runs against `244cf05ac26d036265eaf641a80a80becd83f61d`: [push](https://github.com/perlantir/hipp0mac/actions/runs/25146748947), [PR](https://github.com/perlantir/hipp0mac/actions/runs/25146778415), [dispatch 1](https://github.com/perlantir/hipp0mac/actions/runs/25146839371), [dispatch 2](https://github.com/perlantir/hipp0mac/actions/runs/25146839853). |
 | Recovery battery: 50 distinct induced failures | PARTIAL locally | Unit/property tests classify 100 induced failures and enforce strategy caps. Real-daemon audit pending human run. |
 | Quality battery: 30 mock tasks | PARTIAL locally | Core quality metric formulas, scoring, persistence, and representative reports are implemented; 30-task hand-computed corpus still to be expanded before final sign-off. |
 | Eval mode distinguishes pass/low-quality/safety/questions | DONE locally | `apps/daemon/test/phase5dOutputsEval.test.ts` covers high score, low score, safety, user questions, loops, missing evidence, auto-rerun, aggregate. |
@@ -41,7 +42,21 @@ node scripts/manual-audit/phase5d-recovery-crash-audit.mjs
 
 ## CI Evidence
 
-BLOCKED pending push and GitHub Actions runs.
+Workflow: `Phase 5D Recovery Quality`<br>
+Commit: `244cf05ac26d036265eaf641a80a80becd83f61d`
+
+| Run | Event | Status | URL |
+| --- | --- | --- | --- |
+| 25146748947 | push | success | https://github.com/perlantir/hipp0mac/actions/runs/25146748947 |
+| 25146778415 | pull_request | success | https://github.com/perlantir/hipp0mac/actions/runs/25146778415 |
+| 25146839371 | workflow_dispatch | success | https://github.com/perlantir/hipp0mac/actions/runs/25146839371 |
+| 25146839853 | workflow_dispatch | success | https://github.com/perlantir/hipp0mac/actions/runs/25146839853 |
+
+Cross-phase PR checks also passed on the same commit:
+
+- Phase 5A Node Persistence: https://github.com/perlantir/hipp0mac/actions/runs/25146778409
+- Phase 5B Tool Execution: https://github.com/perlantir/hipp0mac/actions/runs/25146778412
+- Phase 5C Agent Loop: https://github.com/perlantir/hipp0mac/actions/runs/25146778411
 
 ## Known Risks
 
