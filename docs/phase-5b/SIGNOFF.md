@@ -4,7 +4,7 @@ Date: 2026-04-29<br>
 Branch: `phase-5b/tool-execution-safety`<br>
 PR: https://github.com/perlantir/hipp0mac/pull/1<br>
 Implementation/local verification commit:
-`a109dbed5d74fe00a59949980966f5b8d19dbb89`
+`7d2249f9722d701dfe41aa88fb599eb1e8a3340b`
 
 Status: `In Review`. This draft records the current implementation
 checkpoint. Phase 5B is not complete until the remaining gate criteria
@@ -14,15 +14,15 @@ below have CI and manual-audit evidence. The PR remains Draft.
 
 | Criterion | Status | Evidence |
 | --- | --- | --- |
-| Every Phase 5A test still passes | DONE locally | `npm test` passed locally on 2026-04-29. This ran protocol build/tests, daemon build/tests, and SwiftPM macOS tests. |
-| Every Phase 5B test passes in CI on three consecutive runs | DONE for implementation checkpoint | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against `c97a1dd8714ebf301c3d5f401347a12927e35fe6`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3). |
+| Every Phase 5A test still passes | DONE locally | `npm test` passed locally after the manual-audit harness update. This ran protocol build/tests, daemon build/tests, and SwiftPM macOS tests. |
+| Every Phase 5B test passes in CI on three consecutive runs | BLOCKED pending refreshed CI | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against prior checkpoint `c97a1dd8714ebf301c3d5f401347a12927e35fe6`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3). Latest local verification commit `7d2249f9722d701dfe41aa88fb599eb1e8a3340b` added manual audit harnesses and shell safety hardening, so CI must be refreshed on the new tip before this returns to DONE. |
 | `fs.append`/`fs.copy`/`fs.move` idempotency retrofit | DONE locally | `fs.append` now uses per-file append logs under `state/tool-tombstones/fs.append/`; `fs.copy` and `fs.move` use tombstone logs at `state/tool-tombstones/fs.copy.log` and `state/tool-tombstones/fs.move.log`. Tests cover replay no-op and orphan status-query synthesis. |
 | `end_to_end_with_crash` passes with at least 100 crash injection points | DONE locally | `end_to_end_with_crash_100_injection_points` passes locally with 100 injected crashes over a 50-call mixed-class template set. CI evidence pending. |
 | `soak_with_orphans` exists with CI scaling | DONE locally | `soak_with_orphans_ci_scaled` passes locally with 500 calls by default and an orphan every 100 calls; `PHASE5B_ORPHAN_SOAK_CALLS` can scale it. CI evidence pending. |
 | Consumed single-use external approval reconciliation | DONE locally | `orphan_external_consumed_approval_requires_reapproval` verifies that an orphaned external call with status query does not execute under the consumed approval and creates exactly one fresh pending approval before re-execution. |
-| Manual idempotency audit | BLOCKED | Human owner will manually induce crashes during `fs.delete` and `fs.append` and verify zero double effects before merge. |
-| Manual safety audit | BLOCKED | Not yet run manually. Automated coverage includes 20 malicious shell inputs, fs scope denial, network scope denial, approval pause/resume/denial, and safety-before-intent event ordering. |
-| Coverage for tool execution + safety + idempotency modules >= 90% | DONE locally | `npm run test:coverage -w @operator-dock/daemon` passed. `tools/runtime` coverage: 92.5% statements / 85.16% branches / 93.22% functions / 92.5% lines. Report path: `apps/daemon/coverage/index.html`. |
+| Manual idempotency audit | BLOCKED | Human owner will manually induce crashes during `fs.delete` and `fs.append` and verify zero double effects before merge. Harness provided at `scripts/manual-audit/phase5b-crash-audit.mjs`. |
+| Manual safety audit | BLOCKED | Not yet run manually. Harness provided at `scripts/manual-audit/phase5b-safety-audit.mjs` with 50 malicious `shell.exec` inputs. Automated coverage now includes the same denial classes: injection, pipe-to-shell, destructive filesystem, exfiltration, privilege escalation, path traversal, argv variants, and workspace scope. |
+| Coverage for tool execution + safety + idempotency modules >= 90% | DONE locally | `npm run test:coverage -w @operator-dock/daemon` passed. `tools/runtime` coverage: 92.75% statements / 85.5% branches / 93.22% functions / 92.75% lines. Report path: `apps/daemon/coverage/index.html`. |
 
 ## Implementation Summary
 
@@ -41,6 +41,12 @@ below have CI and manual-audit evidence. The PR remains Draft.
 - Hardened orphan reconciliation so consumed single-use external approvals
   require fresh approval before re-execution.
 - Added Phase 5B docs for adding tools, predicates, and reconciliation.
+- Added manual audit harnesses for `fs.delete`, `fs.append`, consumed
+  single-use `shell.run` approval recovery, and the 50-input
+  `shell.exec` safety audit.
+- Hardened shell forbidden predicates to cover command-string and argv
+  variants for injection, pipe-to-shell, destructive file operations,
+  exfiltration, privilege escalation, and path traversal.
 
 ## Files Changed
 
@@ -71,6 +77,13 @@ Tests:
 - `apps/daemon/test/toolRuntime.test.ts`
 - `apps/daemon/test/workspace.test.ts`
 
+Manual audit harness:
+
+- `scripts/manual-audit/README.md`
+- `scripts/manual-audit/lib.mjs`
+- `scripts/manual-audit/phase5b-crash-audit.mjs`
+- `scripts/manual-audit/phase5b-safety-audit.mjs`
+
 Docs:
 
 - `docs/architecture.md`
@@ -85,6 +98,8 @@ Docs:
 - `npm run test -w @operator-dock/daemon -- phase5bToolExecution.test.ts`: passed, 30 Phase 5B tests.
 - `npm run test -w @operator-dock/daemon`: passed, 71 daemon tests.
 - `npm run test:coverage -w @operator-dock/daemon`: passed.
+- `node --check scripts/manual-audit/lib.mjs && node --check scripts/manual-audit/phase5b-crash-audit.mjs && node --check scripts/manual-audit/phase5b-safety-audit.mjs`: passed.
+- `node -e "import('./scripts/manual-audit/phase5b-safety-audit.mjs').then(m=>console.log(m.maliciousShellExecInputs.length))"`: printed `50`.
 - `npm test`: passed.
   - Protocol: 7 tests.
   - Daemon: 71 tests.
@@ -92,9 +107,12 @@ Docs:
 
 ## CI Evidence
 
-- Branch pushed to `origin/phase-5b/tool-execution-safety`.
-- Implementation verification commit:
+- Previous checkpoint was pushed to `origin/phase-5b/tool-execution-safety`.
+- Previous implementation verification commit:
   `c97a1dd8714ebf301c3d5f401347a12927e35fe6`.
+- Latest local verification commit:
+  `7d2249f9722d701dfe41aa88fb599eb1e8a3340b`.
+- New tip CI for the manual-audit harness update is pending.
 - Workflow: `Phase 5B Tool Execution`.
 - Run: https://github.com/perlantir/hipp0mac/actions/runs/25140591400.
 - Consecutive passing attempts:
@@ -112,6 +130,8 @@ Earlier CI failure recorded and fixed:
 ## Known Risks
 
 - Manual idempotency and safety audits are still pending human execution.
+  The harnesses are implemented but the live crash/safety audit evidence
+  must still be collected by the human owner before merge.
 - The orphan soak is CI-scaled by default; the full 10,000-call stress run
   can be exercised by raising `PHASE5B_ORPHAN_SOAK_CALLS`.
 
@@ -119,5 +139,5 @@ Earlier CI failure recorded and fixed:
 
 - Human owner to complete manual idempotency and safety audit evidence
   before declaring Phase 5B done.
-- Keep CI evidence refreshed if additional implementation commits are added
-  before human review.
+- Refresh three consecutive Phase 5B CI runs on the manual-audit harness
+  tip before moving the CI gate back to DONE.
