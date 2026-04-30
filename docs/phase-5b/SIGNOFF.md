@@ -112,7 +112,7 @@ Docs:
   `c97a1dd8714ebf301c3d5f401347a12927e35fe6`.
 - Latest local verification commit:
   `7d2249f9722d701dfe41aa88fb599eb1e8a3340b`.
-- Latest pushed sign-off checkpoint:
+- CI evidence checkpoint:
   `8431512e8a359bf77afb573887bc04c3ac1a9785`.
 - Workflow: `Phase 5B Tool Execution`.
 - Run: https://github.com/perlantir/hipp0mac/actions/runs/25141587401.
