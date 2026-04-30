@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "simple-plan",
+  "description": "Synthetic mock task fixture for Phase 5C happy-path planning.",
+  "taskGoal": "Run a deterministic pure step and verify it.",
+  "expectedEvents": ["plan_generated", "step_selected", "tool_call_result", "step_verification", "goal_verification", "loop_completed"]
+}

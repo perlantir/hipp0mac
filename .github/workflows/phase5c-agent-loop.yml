@@ -1,0 +1,32 @@
+name: Phase 5C Agent Loop
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "phase-5c/**"
+
+jobs:
+  node-and-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Phase 5C coverage
+        run: npm run test:coverage -w @operator-dock/daemon

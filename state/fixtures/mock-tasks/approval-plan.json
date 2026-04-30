@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "approval-plan",
+  "description": "Synthetic mock task fixture for Phase 5C approval pause and resume behavior.",
+  "taskGoal": "Run an external step that pauses for approval before completion.",
+  "expectedEvents": ["awaiting_approval", "step_verification", "goal_verification", "loop_completed"]
+}

@@ -12,7 +12,14 @@ import { buildApp } from "../src/server.js";
 import { MemoryCredentialStore } from "../src/providers/credentialStore.js";
 import { defaultProviderConfig, findProviderTemplate } from "../src/providers/catalog.js";
 import { ProviderConnectionTester } from "../src/providers/providerConnectionTester.js";
-import { MockModelProviderAdapter, ModelRouter } from "../src/providers/modelRouter.js";
+import {
+  AnthropicModelProviderAdapter,
+  buildDefaultModelRouter,
+  MockModelProviderAdapter,
+  ModelRouter,
+  OllamaModelProviderAdapter,
+  OpenAICompatibleModelProviderAdapter
+} from "../src/providers/modelRouter.js";
 import { authHeaders, authStore, persistenceKeyManager } from "./harness.js";
 
 const tempRoots = new Set<string>();
@@ -159,5 +166,167 @@ describe("model router", () => {
     expect(response.providerId).toBe("openai");
     expect(response.model).toBe("gpt-4.1");
     expect(response.message.content).toContain("Mock openai response");
+  });
+
+  it("exercises OpenAI-compatible adapter request and response mapping", async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({
+        authorization: "Bearer sk-test-key"
+      });
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        tools?: unknown[];
+      };
+      expect(body.model).toBe("gpt-test");
+      expect(body.tools).toHaveLength(1);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: "mapped",
+            tool_calls: [{
+              id: "call-1",
+              function: {
+                name: "fs.read",
+                arguments: "{\"path\":\"README.md\"}"
+              }
+            }]
+          }
+        }],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 3
+        }
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const adapter = new OpenAICompatibleModelProviderAdapter(
+      "openai",
+      "https://api.test/v1",
+      new MemoryCredentialStore({ openai: "sk-test-key" }),
+      fetcher
+    );
+
+    const response = await adapter.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      promptVersion: "prompt-v1",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "fs.read", description: "read", parameters: { type: "object" } }]
+    }), "gpt-test");
+
+    expect(response.message.toolCalls).toEqual([{
+      id: "call-1",
+      name: "fs.read",
+      input: { path: "README.md" }
+    }]);
+    expect(response.usage).toMatchObject({ inputTokens: 10, outputTokens: 3 });
+  });
+
+  it("classifies OpenAI-compatible adapter credential and HTTP failures", async () => {
+    const missingKey = new OpenAICompatibleModelProviderAdapter(
+      "openai",
+      "https://api.test/v1",
+      new MemoryCredentialStore({}),
+      vi.fn() as unknown as typeof fetch
+    );
+    await expect(missingKey.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      messages: [{ role: "user", content: "hi" }]
+    }), "gpt-test")).rejects.toThrow(/API key/);
+
+    const httpFailure = new OpenAICompatibleModelProviderAdapter(
+      "lmstudio",
+      "http://127.0.0.1:1234/v1",
+      new MemoryCredentialStore({}),
+      vi.fn(async () => new Response("bad", { status: 500 })) as unknown as typeof fetch,
+      false
+    );
+    await expect(httpFailure.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      messages: [{ role: "user", content: "hi" }]
+    }), "local")).rejects.toThrow(/HTTP 500/);
+  });
+
+  it("exercises Anthropic and Ollama adapter mappings", async () => {
+    const anthropic = new AnthropicModelProviderAdapter(
+      new MemoryCredentialStore({ anthropic: "sk-ant-test" }),
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { system?: string; messages: unknown[]; tools?: unknown[] };
+        expect(body.system).toBe("system prompt");
+        expect(body.messages).toHaveLength(1);
+        expect(body.tools).toHaveLength(1);
+        return new Response(JSON.stringify({
+          content: [
+            { type: "text", text: "anthropic text" },
+            { type: "tool_use", id: "tool-1", name: "fs.list", input: { path: "." } }
+          ],
+          usage: { input_tokens: 8, output_tokens: 4 }
+        }), { status: 200 });
+      }) as unknown as typeof fetch
+    );
+    const anthropicResponse = await anthropic.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      promptVersion: "prompt-v1",
+      messages: [
+        { role: "system", content: "system prompt" },
+        { role: "user", content: "hi" }
+      ],
+      tools: [{ name: "fs.list", description: "list", parameters: { type: "object" } }]
+    }), "claude-test");
+    expect(anthropicResponse.message).toMatchObject({
+      content: "anthropic text",
+      toolCalls: [{ id: "tool-1", name: "fs.list", input: { path: "." } }]
+    });
+
+    const ollama = new OllamaModelProviderAdapter(
+      "http://127.0.0.1:11434",
+      vi.fn(async () => new Response(JSON.stringify({
+        message: {
+          content: "ollama text",
+          tool_calls: [{ function: { name: "fs.search", arguments: { query: "needle" } } }]
+        }
+      }), { status: 200 })) as unknown as typeof fetch
+    );
+    const ollamaResponse = await ollama.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      promptVersion: "prompt-v1",
+      messages: [{ role: "user", content: "hi" }]
+    }), "llama-test");
+    expect(ollamaResponse.message.toolCalls).toEqual([{
+      id: "ollama-tool-1",
+      name: "fs.search",
+      input: { query: "needle" }
+    }]);
+  });
+
+  it("builds the default router with local and mock adapters", async () => {
+    const providers = [
+      {
+        ...defaultProviderConfig(findProviderTemplate("ollama")),
+        enabled: false
+      },
+      {
+        id: "mock" as const,
+        kind: "local" as const,
+        displayName: "Mock",
+        enabled: true,
+        defaultModel: "mock-model",
+        roleDefaults: { planner: "mock-model" },
+        apiKeyConfigured: false,
+        models: [{
+          id: "mock-model",
+          displayName: "Mock model",
+          capabilities: { vision: false, tools: true, streaming: true }
+        }]
+      }
+    ];
+    const router = buildDefaultModelRouter(providers, new MemoryCredentialStore({}));
+    const response = await router.chat(ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      providerId: "mock",
+      promptVersion: "prompt-v1",
+      messages: [{ role: "user", content: "hi" }]
+    }));
+
+    expect(response.providerId).toBe("mock");
+    expect(response.modelVersion).toBe("mock-model");
   });
 });
