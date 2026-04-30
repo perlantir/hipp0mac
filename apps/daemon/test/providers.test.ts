@@ -329,4 +329,28 @@ describe("model router", () => {
     expect(response.providerId).toBe("mock");
     expect(response.modelVersion).toBe("mock-model");
   });
+
+  it("mock planner produces deterministic sleep, safety, and approval plans", async () => {
+    const adapter = new MockModelProviderAdapter("mock");
+    const baseRequest = ModelRouterChatRequestSchema.parse({
+      purpose: "planner",
+      providerId: "mock",
+      promptVersion: "prompt-v1",
+      messages: [{ role: "user", content: "hi [mock-step-delay-ms=25]" }],
+      metadata: { taskId: "task-mock" }
+    });
+    const sleepPlan = JSON.parse((await adapter.chat(baseRequest, "mock-loop")).message.content) as { steps: Array<{ selectedTool: string; toolInput: { durationMs?: number } }> };
+    const safetyPlan = JSON.parse((await adapter.chat({
+      ...baseRequest,
+      messages: [{ role: "user", content: "hi [mock-plan=safety-block]" }]
+    }, "mock-loop")).message.content) as { steps: Array<{ selectedTool: string }> };
+    const approvalPlan = JSON.parse((await adapter.chat({
+      ...baseRequest,
+      messages: [{ role: "user", content: "hi [mock-plan=approval]" }]
+    }, "mock-loop")).message.content) as { steps: Array<{ selectedTool: string }> };
+
+    expect(sleepPlan.steps[0]).toMatchObject({ selectedTool: "sleep.wait", toolInput: { durationMs: 25 } });
+    expect(safetyPlan.steps[0]?.selectedTool).toBe("shell.exec");
+    expect(approvalPlan.steps[0]?.selectedTool).toBe("shell.run");
+  });
 });
