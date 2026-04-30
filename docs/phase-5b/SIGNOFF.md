@@ -15,10 +15,10 @@ below have CI and manual-audit evidence. The PR remains Draft.
 | Criterion | Status | Evidence |
 | --- | --- | --- |
 | Every Phase 5A test still passes | DONE locally | `npm test` passed locally after the manual-audit harness update. This ran protocol build/tests, daemon build/tests, and SwiftPM macOS tests. |
-| Every Phase 5B test passes in CI on three consecutive runs | BLOCKED pending refreshed CI | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against prior checkpoint `c97a1dd8714ebf301c3d5f401347a12927e35fe6`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3). Latest local verification commit `7d2249f9722d701dfe41aa88fb599eb1e8a3340b` added manual audit harnesses and shell safety hardening, so CI must be refreshed on the new tip before this returns to DONE. |
+| Every Phase 5B test passes in CI on three consecutive runs | DONE for implementation checkpoint | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against `8431512e8a359bf77afb573887bc04c3ac1a9785`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/3). |
 | `fs.append`/`fs.copy`/`fs.move` idempotency retrofit | DONE locally | `fs.append` now uses per-file append logs under `state/tool-tombstones/fs.append/`; `fs.copy` and `fs.move` use tombstone logs at `state/tool-tombstones/fs.copy.log` and `state/tool-tombstones/fs.move.log`. Tests cover replay no-op and orphan status-query synthesis. |
-| `end_to_end_with_crash` passes with at least 100 crash injection points | DONE locally | `end_to_end_with_crash_100_injection_points` passes locally with 100 injected crashes over a 50-call mixed-class template set. CI evidence pending. |
-| `soak_with_orphans` exists with CI scaling | DONE locally | `soak_with_orphans_ci_scaled` passes locally with 500 calls by default and an orphan every 100 calls; `PHASE5B_ORPHAN_SOAK_CALLS` can scale it. CI evidence pending. |
+| `end_to_end_with_crash` passes with at least 100 crash injection points | DONE | `end_to_end_with_crash_100_injection_points` passes locally and in Phase 5B CI with 100 injected crashes over a 50-call mixed-class template set. |
+| `soak_with_orphans` exists with CI scaling | DONE | `soak_with_orphans_ci_scaled` passes locally and in Phase 5B CI with 500 calls by default and an orphan every 100 calls; `PHASE5B_ORPHAN_SOAK_CALLS` can scale it. |
 | Consumed single-use external approval reconciliation | DONE locally | `orphan_external_consumed_approval_requires_reapproval` verifies that an orphaned external call with status query does not execute under the consumed approval and creates exactly one fresh pending approval before re-execution. |
 | Manual idempotency audit | BLOCKED | Human owner will manually induce crashes during `fs.delete` and `fs.append` and verify zero double effects before merge. Harness provided at `scripts/manual-audit/phase5b-crash-audit.mjs`. |
 | Manual safety audit | BLOCKED | Not yet run manually. Harness provided at `scripts/manual-audit/phase5b-safety-audit.mjs` with 50 malicious `shell.exec` inputs. Automated coverage now includes the same denial classes: injection, pipe-to-shell, destructive filesystem, exfiltration, privilege escalation, path traversal, argv variants, and workspace scope. |
@@ -112,16 +112,17 @@ Docs:
   `c97a1dd8714ebf301c3d5f401347a12927e35fe6`.
 - Latest local verification commit:
   `7d2249f9722d701dfe41aa88fb599eb1e8a3340b`.
-- New tip CI for the manual-audit harness update is pending.
+- Latest pushed sign-off checkpoint:
+  `8431512e8a359bf77afb573887bc04c3ac1a9785`.
 - Workflow: `Phase 5B Tool Execution`.
-- Run: https://github.com/perlantir/hipp0mac/actions/runs/25140591400.
+- Run: https://github.com/perlantir/hipp0mac/actions/runs/25141587401.
 - Consecutive passing attempts:
-  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1
-  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2
-  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3
+  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/1
+  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/2
+  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25141587401/attempts/3
 - PR-triggered checks on the same head SHA also passed:
-  - Phase 5B Tool Execution: https://github.com/perlantir/hipp0mac/actions/runs/25140592583
-  - Phase 5A Node Persistence: https://github.com/perlantir/hipp0mac/actions/runs/25140592576
+  - Phase 5B Tool Execution: https://github.com/perlantir/hipp0mac/actions/runs/25141588265
+  - Phase 5A Node Persistence: https://github.com/perlantir/hipp0mac/actions/runs/25141588258
 
 Earlier CI failure recorded and fixed:
 
@@ -139,5 +140,5 @@ Earlier CI failure recorded and fixed:
 
 - Human owner to complete manual idempotency and safety audit evidence
   before declaring Phase 5B done.
-- Refresh three consecutive Phase 5B CI runs on the manual-audit harness
-  tip before moving the CI gate back to DONE.
+- Manual audit evidence remains the only owner-side gate evidence still
+  pending before declaring Phase 5B complete.
