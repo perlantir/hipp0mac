@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  assertFreshDaemonBuild,
   configureAuditWorkspace,
   defaultDaemonUrl,
   defaultWorkspaceRoot,
@@ -71,13 +72,18 @@ const workspaceRoot = resolve(args.get("workspace") ?? defaultWorkspaceRoot);
 const keepWorkspace = args.get("keep-workspace") === "true";
 
 if (isDirectRun()) {
-  const token = await loadBearerToken(args);
-  const previousWorkspace = await configureAuditWorkspace(daemonUrl, token, workspaceRoot);
-
+  let token;
+  let previousWorkspace;
   try {
+    token = await loadBearerToken(args);
+    await assertFreshDaemonBuild(daemonUrl, token);
+    previousWorkspace = await configureAuditWorkspace(daemonUrl, token, workspaceRoot);
     await run(token);
+  } catch (error) {
+    console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
   } finally {
-    if (!keepWorkspace) {
+    if (!keepWorkspace && previousWorkspace !== undefined) {
       await restoreWorkspace(daemonUrl, token, previousWorkspace);
     }
   }

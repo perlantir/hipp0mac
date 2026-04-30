@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,22 @@ export async function api(daemonUrl, token, path, options = {}) {
   }
 
   return body;
+}
+
+export async function assertFreshDaemonBuild(daemonUrl, token) {
+  const daemonHealth = await api(daemonUrl, token, "/health");
+  const daemonBuild = daemonHealth?.build;
+  const localBuild = await localBuildInfo();
+  if (!isBuildInfo(daemonBuild) || !sameBuild(daemonBuild, localBuild)) {
+    const daemonBuiltAt = isBuildInfo(daemonBuild) ? daemonBuild.serverFileMtimeIso : "unknown";
+    const daemonCommit = isBuildInfo(daemonBuild) ? daemonBuild.gitCommit : "unknown";
+    throw new Error(
+      "Stale daemon detected. "
+      + `The Mac app is supervising a daemon built at ${daemonBuiltAt} from commit ${daemonCommit}, `
+      + `but the local repo dist was built at ${localBuild.serverFileMtimeIso} from commit ${localBuild.gitCommit}. `
+      + "Quit the Mac app and relaunch, then rerun the audit."
+    );
+  }
 }
 
 export async function configureAuditWorkspace(daemonUrl, token, workspaceRoot) {
@@ -205,6 +221,40 @@ export function countOccurrences(value, needle) {
 
 export async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function localBuildInfo() {
+  const distServer = join(repoRoot, "apps", "daemon", "dist", "server.js");
+  let serverFile;
+  try {
+    serverFile = await stat(distServer);
+  } catch (error) {
+    throw new Error(`Local daemon dist file is missing at ${distServer}. Run npm run build, relaunch the Mac app, then rerun the audit.`, {
+      cause: error
+    });
+  }
+
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: repoRoot
+  });
+  return {
+    gitCommit: stdout.trim(),
+    serverFileMtimeMs: Math.trunc(serverFile.mtimeMs),
+    serverFileMtimeIso: serverFile.mtime.toISOString()
+  };
+}
+
+function isBuildInfo(value) {
+  return value !== undefined
+    && value !== null
+    && typeof value.gitCommit === "string"
+    && typeof value.serverFileMtimeMs === "number"
+    && typeof value.serverFileMtimeIso === "string";
+}
+
+function sameBuild(daemonBuild, localBuild) {
+  return daemonBuild.gitCommit === localBuild.gitCommit
+    && Math.trunc(daemonBuild.serverFileMtimeMs) === localBuild.serverFileMtimeMs;
 }
 
 async function killPid(pid) {

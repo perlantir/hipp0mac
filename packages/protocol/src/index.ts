@@ -747,6 +747,11 @@ export const HealthResponseSchema = z.object({
   service: z.literal("operator-dock-daemon"),
   version: z.string(),
   database: z.literal("ok"),
+  build: z.object({
+    gitCommit: z.string().trim().min(1),
+    serverFileMtimeMs: z.number().nonnegative(),
+    serverFileMtimeIso: isoDateTimeSchema
+  }),
   timestamp: isoDateTimeSchema
 });
 

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import {
   api,
   approvalIdFrom,
+  assertFreshDaemonBuild,
   configureAuditWorkspace,
   countOccurrences,
   defaultDaemonUrl,
@@ -30,13 +31,17 @@ const keepWorkspace = args.get("keep-workspace") === "true";
 let token;
 
 if (isDirectRun()) {
-  token = await loadBearerToken(args);
-  const previousWorkspace = await configureAuditWorkspace(daemonUrl, token, workspaceRoot);
-
+  let previousWorkspace;
   try {
+    token = await loadBearerToken(args);
+    await assertFreshDaemonBuild(daemonUrl, token);
+    previousWorkspace = await configureAuditWorkspace(daemonUrl, token, workspaceRoot);
     await run(token);
+  } catch (error) {
+    console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
   } finally {
-    if (!keepWorkspace) {
+    if (!keepWorkspace && previousWorkspace !== undefined) {
       await restoreWorkspace(daemonUrl, token, previousWorkspace);
     }
   }

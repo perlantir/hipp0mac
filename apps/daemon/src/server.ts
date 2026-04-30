@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import type { Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import {
@@ -82,6 +85,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const authToken = await (options.authTokenStore ?? daemonAuthTokenStoreFromEnv(process.env)).loadOrCreateToken();
   const eventStore = new EventStore(paths, persistenceKeys);
   const locks = new LockController(paths, eventStore);
+  const build = readDaemonBuildInfo();
 
   if (options.migrate !== false) {
     runMigrations(database, config.migrationsDir);
@@ -183,6 +187,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
       service: "operator-dock-daemon",
       version: "0.1.0",
       database: "ok",
+      build,
       timestamp: new Date().toISOString()
     });
   });
@@ -239,6 +244,31 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   return app;
+}
+
+function readDaemonBuildInfo(): {
+  gitCommit: string;
+  serverFileMtimeMs: number;
+  serverFileMtimeIso: string;
+} {
+  const serverFile = statSync(fileURLToPath(import.meta.url));
+  return {
+    gitCommit: readGitCommit(),
+    serverFileMtimeMs: Math.trunc(serverFile.mtimeMs),
+    serverFileMtimeIso: serverFile.mtime.toISOString()
+  };
+}
+
+function readGitCommit(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "unknown";
+  }
 }
 
 function emitLegacyProjectionNotice(database: DatabaseConnection, eventStore: EventStore): void {

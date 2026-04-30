@@ -50,7 +50,10 @@ describe("daemon server", () => {
     await app.close();
 
     expect(response.statusCode).toBe(200);
-    expect(HealthResponseSchema.parse(response.json()).status).toBe("ok");
+    const health = HealthResponseSchema.parse(response.json());
+    expect(health.status).toBe("ok");
+    expect(health.build.gitCommit).toMatch(/^[0-9a-f]{40}$|^unknown$/);
+    expect(health.build.serverFileMtimeMs).toBeGreaterThan(0);
   });
 
   it("creates a task and emits a live event", async () => {
