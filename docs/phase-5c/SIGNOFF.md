@@ -135,6 +135,7 @@ Docs and CI:
 
 - Add a real process-kill crash harness for `mock_task_with_crash` with 20+ kill points and 100 random crash injections.
 - Phase 5D must build a real-daemon crash battery covering: agent loop crash mid-plan-step, agent loop crash mid-verification, agent loop crash during recovery itself, agent loop crash with consumed approvals in flight.
+- Phase 5E hardening: Expand `dangerousShellInputArbitrary()` to a real grammar of dangerous inputs covering random combinations of dangerous keywords with varied flags, random metacharacter injection at varied positions, random pipe-to-shell variants with quoting variations, random path traversal with random target sensitive files, random argv-array smuggling patterns, random privilege escalation combinations, and random encoding tricks. Property remains "every generated input is denied by the Safety Governor." Goal: catch regressions in predicates not represented by the 9 curated patterns.
 - Decide whether the Phase 5C CI workflow should remain as a long-term protected workflow or fold into the existing default CI once Phase 5C lands.
 - Phase 5D must preserve the Phase 5C invariants: replay never re-invokes models, replay never re-executes write/external tools, untrusted content is sentinel-wrapped before prompts, and verifiers cannot pass on confidence alone.
 
