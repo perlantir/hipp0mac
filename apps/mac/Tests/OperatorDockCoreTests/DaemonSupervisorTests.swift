@@ -72,11 +72,17 @@ final class DaemonSupervisorTests: XCTestCase {
   }
 
   func testSupervisorRespawnsCrashedChildProcess() async throws {
+    let tempRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("operator-dock-respawn-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempRoot) }
+
     let supervisor = DaemonSupervisor(
       configuration: .init(
         executablePath: "/bin/sleep",
         arguments: ["60"],
-        respawnDelaySeconds: 0.05
+        respawnDelaySeconds: 0.05,
+        logFilePath: tempRoot.appendingPathComponent("daemon.log").path
       )
     )
     try supervisor.start()
@@ -163,7 +169,7 @@ final class DaemonSupervisorTests: XCTestCase {
     let daemonEntry = root.appendingPathComponent("apps/daemon/dist/index.js")
     XCTAssertTrue(
       FileManager.default.fileExists(atPath: daemonEntry.path),
-      "Run npm run build -w @operator-dock/daemon before this integration test."
+      "Run npm run build before this integration test."
     )
 
     let tempRoot = FileManager.default.temporaryDirectory
@@ -198,7 +204,8 @@ final class DaemonSupervisorTests: XCTestCase {
         startupGraceSeconds: 2.0,
         healthFailureThreshold: 3,
         healthURLString: "http://127.0.0.1:\(port)/health",
-        healthBearerToken: token
+        healthBearerToken: token,
+        logFilePath: tempRoot.appendingPathComponent("daemon.log").path
       )
     )
     try supervisor.start()
@@ -246,7 +253,7 @@ final class DaemonSupervisorTests: XCTestCase {
     let daemonEntry = root.appendingPathComponent("apps/daemon/dist/index.js")
     XCTAssertTrue(
       FileManager.default.fileExists(atPath: daemonEntry.path),
-      "Run npm run build -w @operator-dock/daemon before this integration test."
+      "Run npm run build before this integration test."
     )
 
     let tempRoot = FileManager.default.temporaryDirectory
@@ -279,7 +286,8 @@ final class DaemonSupervisorTests: XCTestCase {
         startupGraceSeconds: 2.0,
         healthFailureThreshold: 3,
         healthURLString: "http://127.0.0.1:\(port)/health",
-        healthBearerToken: token
+        healthBearerToken: token,
+        logFilePath: tempRoot.appendingPathComponent("daemon.log").path
       )
     )
     try supervisor.start()
