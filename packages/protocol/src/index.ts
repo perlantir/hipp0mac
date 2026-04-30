@@ -683,6 +683,135 @@ export const SleepWaitOutputSchema = z.object({
   durationMs: z.number().int().nonnegative()
 });
 
+export const AgentCriterionSchema = z.object({
+  id: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  predicate: PredicateSchema,
+  requiresEvidence: z.boolean()
+});
+
+export const AgentRiskLevelSchema = z.enum(["low", "medium", "high", "critical"]);
+
+export const AgentRiskSchema = z.object({
+  id: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  level: AgentRiskLevelSchema,
+  mitigation: z.string().trim().min(1).optional()
+});
+
+export const AgentArtifactDescriptorSchema = z.object({
+  kind: ArtifactKindSchema,
+  name: z.string().trim().min(1),
+  uri: z.string().trim().min(1).optional(),
+  metadata: jsonObjectSchema.default({})
+});
+
+export const AgentStepSchema = z.object({
+  stepId: z.string().trim().min(1),
+  intent: z.string().trim().min(1),
+  selectedTool: z.string().trim().min(1),
+  selectedToolVersion: z.string().trim().min(1),
+  toolInput: jsonObjectSchema,
+  expectedObservation: z.string().trim().min(1),
+  successCheck: PredicateSchema,
+  riskLevel: AgentRiskLevelSchema,
+  fallbackStrategies: z.array(z.string()).default([]),
+  rationale: z.string().trim().min(1),
+  estimatedValue: z.number().min(0).max(1),
+  dependsOn: z.array(z.string().trim().min(1)),
+  produces: z.array(z.string().trim().min(1)),
+  consumes: z.array(z.string().trim().min(1)),
+  taint: z.boolean()
+});
+
+export const AgentPlanSchema = z.object({
+  schemaVersion: z.literal(1),
+  planId: z.string().trim().min(1),
+  taskId: z.string().trim().min(1),
+  revision: z.number().int().nonnegative(),
+  parentPlanId: z.string().trim().min(1).nullable(),
+  taskGoal: z.string().trim().min(1),
+  assumptions: z.array(z.string()),
+  constraints: z.array(z.string()),
+  successCriteria: z.array(AgentCriterionSchema),
+  doneConditions: z.array(AgentCriterionSchema),
+  forbiddenActions: z.array(PredicateSchema),
+  expectedStepEstimate: z.number().int().positive().nullable(),
+  risks: z.array(AgentRiskSchema),
+  expectedArtifacts: z.array(AgentArtifactDescriptorSchema),
+  openQuestions: z.array(z.string()),
+  steps: z.array(AgentStepSchema)
+});
+
+export const EventRefSchema = z.string().trim().min(1);
+
+export const StepVerificationSchema = z.object({
+  passed: z.boolean(),
+  confidence: z.number().min(0).max(1),
+  evidenceRefs: z.array(EventRefSchema),
+  issuesFound: z.array(z.string()),
+  qualityConcerns: z.array(z.string())
+});
+
+export const GoalVerificationItemSchema = z.object({
+  criterionId: z.string().trim().min(1).optional(),
+  conditionId: z.string().trim().min(1).optional(),
+  met: z.boolean(),
+  evidenceRefs: z.array(EventRefSchema)
+});
+
+export const GoalVerificationSchema = z.object({
+  successCriteriaMet: z.array(GoalVerificationItemSchema.extend({
+    criterionId: z.string().trim().min(1)
+  })),
+  doneConditionsMet: z.array(GoalVerificationItemSchema.extend({
+    conditionId: z.string().trim().min(1)
+  })),
+  passed: z.boolean(),
+  qualityConcerns: z.array(z.string())
+});
+
+export const ContextItemProvenanceSchema = z.object({
+  source: z.string().trim().min(1),
+  eventRef: EventRefSchema,
+  includedBecause: z.string().trim().min(1),
+  tokens: z.number().int().nonnegative(),
+  taint: z.boolean()
+});
+
+export const ContextPackItemSchema = z.object({
+  itemId: z.string().trim().min(1),
+  content: z.string(),
+  provenance: ContextItemProvenanceSchema,
+  rawEventRef: EventRefSchema.optional(),
+  compacted: z.boolean().default(false)
+});
+
+export const ContextPackSchema = z.object({
+  schemaVersion: z.literal(1),
+  taskId: z.string().trim().min(1),
+  totalTokens: z.number().int().nonnegative(),
+  budgetTokens: z.number().int().positive(),
+  items: z.array(ContextPackItemSchema)
+});
+
+export const MemoryTrustLevelSchema = z.enum(["trusted", "untrusted", "unknown"]);
+
+export const MemoryRefSchema = z.object({
+  memoryId: z.string().trim().min(1),
+  summary: z.string(),
+  provenance: jsonObjectSchema,
+  trustLevel: MemoryTrustLevelSchema,
+  ttl: z.string().nullable()
+});
+
+export const MemoryWriteProposalSchema = z.object({
+  proposalId: z.string().trim().min(1),
+  item: jsonValueSchema,
+  provenance: jsonObjectSchema,
+  status: z.enum(["proposed", "committed", "rejected"]).default("proposed")
+});
+
 const EventBaseSchema = z.object({
   id: idSchema,
   occurredAt: isoDateTimeSchema
@@ -848,3 +977,15 @@ export type HttpFetchInput = z.infer<typeof HttpFetchInputSchema>;
 export type HttpFetchOutput = z.infer<typeof HttpFetchOutputSchema>;
 export type SleepWaitInput = z.infer<typeof SleepWaitInputSchema>;
 export type SleepWaitOutput = z.infer<typeof SleepWaitOutputSchema>;
+export type AgentCriterion = z.infer<typeof AgentCriterionSchema>;
+export type AgentRiskLevel = z.infer<typeof AgentRiskLevelSchema>;
+export type AgentRisk = z.infer<typeof AgentRiskSchema>;
+export type AgentArtifactDescriptor = z.infer<typeof AgentArtifactDescriptorSchema>;
+export type AgentStep = z.infer<typeof AgentStepSchema>;
+export type AgentPlan = z.infer<typeof AgentPlanSchema>;
+export type StepVerification = z.infer<typeof StepVerificationSchema>;
+export type GoalVerification = z.infer<typeof GoalVerificationSchema>;
+export type ContextPack = z.infer<typeof ContextPackSchema>;
+export type ContextPackItem = z.infer<typeof ContextPackItemSchema>;
+export type MemoryRef = z.infer<typeof MemoryRefSchema>;
+export type MemoryWriteProposal = z.infer<typeof MemoryWriteProposalSchema>;
