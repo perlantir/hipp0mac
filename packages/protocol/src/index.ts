@@ -145,7 +145,7 @@ export const ModelMessageSchema = z.object({
   createdAt: isoDateTimeSchema
 });
 
-export const ProviderIdSchema = z.enum(["openai", "anthropic", "openrouter", "ollama", "lmstudio"]);
+export const ProviderIdSchema = z.enum(["openai", "anthropic", "openrouter", "ollama", "lmstudio", "mock"]);
 
 export const ProviderKindSchema = z.enum(["hosted", "local"]);
 
@@ -246,10 +246,27 @@ export const ModelRouterToolSchema = z.object({
   parameters: jsonObjectSchema
 });
 
+export const ModelProviderErrorKindSchema = z.enum([
+  "rate_limit",
+  "server_error",
+  "bad_request",
+  "auth",
+  "other"
+]);
+
+export const ModelFallbackTargetSchema = z.object({
+  providerId: ProviderIdSchema,
+  model: z.string().trim().min(1).optional()
+});
+
 export const ModelRouterChatRequestSchema = z.object({
   purpose: ModelPurposeSchema,
   providerId: ProviderIdSchema.optional(),
   model: z.string().trim().min(1).optional(),
+  promptVersion: z.string().trim().min(1).default("prompt-unversioned"),
+  schemaDigest: z.string().trim().min(1).optional(),
+  maxTokens: z.number().int().positive().optional(),
+  fallbackChain: z.array(ModelFallbackTargetSchema).default([]),
   messages: z.array(ModelRouterMessageSchema).min(1),
   tools: z.array(ModelRouterToolSchema).default([]),
   stream: z.boolean().default(false),
@@ -264,7 +281,11 @@ export const ModelRouterToolCallSchema = z.object({
 
 export const ModelRouterChatResponseSchema = z.object({
   providerId: ProviderIdSchema,
+  providerName: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1),
+  modelVersion: z.string().trim().min(1).optional(),
+  promptVersion: z.string().trim().min(1).optional(),
+  providerError: ModelProviderErrorKindSchema.optional(),
   message: z.object({
     role: z.literal("assistant"),
     content: z.string(),
@@ -789,6 +810,8 @@ export type ModelRouterConfig = z.infer<typeof ModelRouterConfigSchema>;
 export type ModelRouterConfigUpdate = z.infer<typeof ModelRouterConfigUpdateSchema>;
 export type ModelRouterChatRequest = z.infer<typeof ModelRouterChatRequestSchema>;
 export type ModelRouterChatResponse = z.infer<typeof ModelRouterChatResponseSchema>;
+export type ModelProviderErrorKind = z.infer<typeof ModelProviderErrorKindSchema>;
+export type ModelFallbackTarget = z.infer<typeof ModelFallbackTargetSchema>;
 export type WorkspaceFolders = z.infer<typeof WorkspaceFoldersSchema>;
 export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
 export type WorkspaceConfigureInput = z.infer<typeof WorkspaceConfigureInputSchema>;
