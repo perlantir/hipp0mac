@@ -29,7 +29,11 @@ export function evaluatePredicate(
     return !evaluatePredicate(predicate.clause, input, context);
   case "match": {
     const value = valueAtPath(input, predicate.path);
-    return typeof value === "string" && new RegExp(predicate.regex).test(value);
+    if (value === undefined) {
+      return false;
+    }
+    const matchedValue = typeof value === "string" ? value : canonicalJson(value);
+    return new RegExp(predicate.regex).test(matchedValue);
   }
   case "equals":
     return canonicalJson(valueAtPath(input, predicate.path) ?? null) === canonicalJson(predicate.value);

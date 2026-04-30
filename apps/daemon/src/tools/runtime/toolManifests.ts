@@ -106,16 +106,44 @@ export function sleepWaitManifest(): ToolCapabilityManifest {
 }
 
 export function shellForbiddenPredicates(): Predicate[] {
+  const boundary = "(^|(?:&&|\\|\\||[;&|])\\s*)";
   return [
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)rm\\s+-(?:[A-Za-z]*r[A-Za-z]*f|[A-Za-z]*f[A-Za-z]*r)\\s+(?:--\\s+)?[\"']?/[\"']?(?:\\s|$)" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)rm\\s+-(?:[A-Za-z]*r[A-Za-z]*f|[A-Za-z]*f[A-Za-z]*r)\\s+(?:--\\s+)?(?:~|\\$HOME)(?:\\s|$)" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)(mkfs|newfs|shutdown|reboot|halt)(\\s|$)" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)diskutil\\s+(erase\\w*|partition\\w*|apfs\\s+delete\\w*|unmountDisk\\s+force)(\\s|$)" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)dd\\s+.*\\bof=/dev/" },
+    { op: "match", path: "command", regex: `${boundary}rm\\s+-(?:[A-Za-z]*r[A-Za-z]*f|[A-Za-z]*f[A-Za-z]*r)\\s+(?:--\\s+)?[\\"']?/[\\\"']?(?:\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}rm\\s+-(?:[A-Za-z]*r[A-Za-z]*f|[A-Za-z]*f[A-Za-z]*r)\\s+(?:--\\s+)?(?:~|\\$HOME)(?:\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}rm\\s+-(?:[A-Za-z]*r[A-Za-z]*f|[A-Za-z]*f[A-Za-z]*r)\\s+(?:--\\s+)?(?:\\.\\.|\\.\\.|\\.\\.|/tmp|\\*)(?:\\s|/|$)` },
+    { op: "match", path: "command", regex: `${boundary}(mkfs|newfs|shutdown|reboot|halt)(\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}diskutil\\s+(erase\\w*|partition\\w*|apfs\\s+delete\\w*|unmountDisk\\s+force)(\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}dd\\s+.*\\bof=/dev/` },
     { op: "match", path: "command", regex: ":\\s*\\(\\)\\s*\\{\\s*:\\s*\\|\\s*:\\s*&\\s*\\}" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)sudo(\\s|$)" },
-    { op: "match", path: "command", regex: "(^|[;&|]\\s*)su(\\s|$)" },
-    { op: "match", path: "command", regex: "\\b(curl|wget)\\b[\\s\\S]*\\|\\s*(?:env\\s+)?(?:bash|sh|zsh)\\b" }
+    { op: "match", path: "command", regex: `${boundary}sudo(\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}su(\\s|$)` },
+    { op: "match", path: "command", regex: `${boundary}chmod\\s+(?:-[^\\s]+\\s+)*777\\b` },
+    { op: "match", path: "command", regex: `${boundary}chown\\s+(?:-[^\\s]+\\s+)*(?:root|0)(?::|\\s)` },
+    { op: "and", clauses: [
+      { op: "match", path: "command", regex: "(^|/)rm$" },
+      { op: "match", path: "args", regex: `"-[^"]*(?:r[^"]*f|f[^"]*r)[^"]*"[\\s\\S]*"(?:/|~|\\$HOME|\\.\\.(?:/[^"]*)?|/tmp|\\*)"` }
+    ] },
+    { op: "and", clauses: [
+      { op: "match", path: "command", regex: "(^|/)dd$" },
+      { op: "match", path: "args", regex: `"of=/dev/` }
+    ] },
+    { op: "match", path: "command", regex: "(^|/)sudo$" },
+    { op: "match", path: "command", regex: "(^|/)su$" },
+    { op: "and", clauses: [
+      { op: "match", path: "command", regex: "(^|/)chmod$" },
+      { op: "match", path: "args", regex: `"777"` }
+    ] },
+    { op: "match", path: "command", regex: "\\b(curl|wget)\\b[\\s\\S]*\\|\\s*(?:env\\s+)?(?:bash|sh|zsh)\\b" },
+    { op: "match", path: "command", regex: "\\b(curl|wget)\\b[\\s\\S]*(?:--data|-d|--form|-F|--upload-file|--post-file)(?:\\s+|=)@?[^\\s;&|]+" },
+    { op: "and", clauses: [
+      { op: "match", path: "command", regex: "(^|/)(curl|wget)$" },
+      { op: "match", path: "args", regex: `"(?:--data|-d|--form|-F|--upload-file|--post-file)"[\\s\\S]*"@?[^"]+"` }
+    ] },
+    { op: "match", path: "command", regex: `${boundary}(nc|netcat|scp|rsync|ftp|sftp)\\b[\\s\\S]*(?:<\\s*[^\\s;&|]+|@[^\\s;&|]+)` },
+    { op: "match", path: "command", regex: "(^|/)(nc|netcat|scp|rsync|ftp|sftp)$" },
+    { op: "match", path: "command", regex: "(?:`[^`]+`|\\$\\([^)]*\\))" },
+    { op: "match", path: "command", regex: "(?:\\.\\./){2,}(?:etc/passwd|\\.ssh|Library/Keychains|secrets?|\\.env)" },
+    { op: "match", path: "command", regex: "(?:^|\\s)(?:cat|less|more|head|tail|sed|awk|grep)\\s+[^;&|]*(?:/etc/passwd|/etc/shadow|\\.ssh/id_|Library/Keychains|\\.env)" }
   ];
 }
 
