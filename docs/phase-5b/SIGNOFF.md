@@ -15,7 +15,7 @@ below have CI and manual-audit evidence. The PR remains Draft.
 | Criterion | Status | Evidence |
 | --- | --- | --- |
 | Every Phase 5A test still passes | DONE locally | `npm test` passed locally on 2026-04-29. This ran protocol build/tests, daemon build/tests, and SwiftPM macOS tests. |
-| Every Phase 5B test passes in CI on three consecutive runs | PENDING new tip | Previous checkpoint passed three CI attempts against `fed58f1a262206f36b28e98b18302a4feaa4b9ff`; new fs retrofit/crash harness commit still needs three consecutive GitHub Actions passes. |
+| Every Phase 5B test passes in CI on three consecutive runs | DONE for implementation checkpoint | Workflow `Phase 5B Tool Execution` passed three consecutive GitHub Actions attempts against `c97a1dd8714ebf301c3d5f401347a12927e35fe6`: [attempt 1](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1), [attempt 2](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2), [attempt 3](https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3). |
 | `fs.append`/`fs.copy`/`fs.move` idempotency retrofit | DONE locally | `fs.append` now uses per-file append logs under `state/tool-tombstones/fs.append/`; `fs.copy` and `fs.move` use tombstone logs at `state/tool-tombstones/fs.copy.log` and `state/tool-tombstones/fs.move.log`. Tests cover replay no-op and orphan status-query synthesis. |
 | `end_to_end_with_crash` passes with at least 100 crash injection points | DONE locally | `end_to_end_with_crash_100_injection_points` passes locally with 100 injected crashes over a 50-call mixed-class template set. CI evidence pending. |
 | `soak_with_orphans` exists with CI scaling | DONE locally | `soak_with_orphans_ci_scaled` passes locally with 500 calls by default and an orphan every 100 calls; `PHASE5B_ORPHAN_SOAK_CALLS` can scale it. CI evidence pending. |
@@ -92,17 +92,18 @@ Docs:
 
 ## CI Evidence
 
-- Previous checkpoint was pushed to `origin/phase-5b/tool-execution-safety`.
-- Previous verification commit: `fed58f1a262206f36b28e98b18302a4feaa4b9ff`.
-- Previous workflow: `Phase 5B Tool Execution`.
-- Previous run: https://github.com/perlantir/hipp0mac/actions/runs/25139274241.
-- Previous consecutive passing attempts:
-  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/1
-  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/2
-  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25139274241/attempts/3
-
-New fs retrofit / crash harness commit still needs three consecutive CI
-passes on GitHub Actions after it is pushed.
+- Branch pushed to `origin/phase-5b/tool-execution-safety`.
+- Implementation verification commit:
+  `c97a1dd8714ebf301c3d5f401347a12927e35fe6`.
+- Workflow: `Phase 5B Tool Execution`.
+- Run: https://github.com/perlantir/hipp0mac/actions/runs/25140591400.
+- Consecutive passing attempts:
+  - Attempt 1: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/1
+  - Attempt 2: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/2
+  - Attempt 3: https://github.com/perlantir/hipp0mac/actions/runs/25140591400/attempts/3
+- PR-triggered checks on the same head SHA also passed:
+  - Phase 5B Tool Execution: https://github.com/perlantir/hipp0mac/actions/runs/25140592583
+  - Phase 5A Node Persistence: https://github.com/perlantir/hipp0mac/actions/runs/25140592576
 
 Earlier CI failure recorded and fixed:
 
@@ -116,7 +117,6 @@ Earlier CI failure recorded and fixed:
 
 ## Carry Forward
 
-- Complete the three consecutive CI runs on the new branch tip.
 - Human owner to complete manual idempotency and safety audit evidence
   before declaring Phase 5B done.
 - Keep CI evidence refreshed if additional implementation commits are added
