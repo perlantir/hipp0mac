@@ -1,14 +1,13 @@
-# Phase 5B Sign-Off Draft
+# Phase 5B Sign-Off
 
-Date: 2026-04-29<br>
+Date: 2026-04-30<br>
 Branch: `phase-5b/tool-execution-safety`<br>
 PR: https://github.com/perlantir/hipp0mac/pull/1<br>
 Implementation/local verification commit:
-`7d2249f9722d701dfe41aa88fb599eb1e8a3340b`
+`6d3e279802530544767e1074e2a6c0ae378d3d32`
 
-Status: `In Review`. This draft records the current implementation
-checkpoint. Phase 5B is not complete until the remaining gate criteria
-below have CI and manual-audit evidence. The PR remains Draft.
+Status: `Ready for Review`. All Phase 5B gate criteria have automated,
+CI, and manual-audit evidence. The human owner will merge the PR.
 
 ## Gate Criteria
 
@@ -20,8 +19,8 @@ below have CI and manual-audit evidence. The PR remains Draft.
 | `end_to_end_with_crash` passes with at least 100 crash injection points | DONE | `end_to_end_with_crash_100_injection_points` passes locally and in Phase 5B CI with 100 injected crashes over a 50-call mixed-class template set. |
 | `soak_with_orphans` exists with CI scaling | DONE | `soak_with_orphans_ci_scaled` passes locally and in Phase 5B CI with 500 calls by default and an orphan every 100 calls; `PHASE5B_ORPHAN_SOAK_CALLS` can scale it. |
 | Consumed single-use external approval reconciliation | DONE locally | `orphan_external_consumed_approval_requires_reapproval` verifies that an orphaned external call with status query does not execute under the consumed approval and creates exactly one fresh pending approval before re-execution. |
-| Manual idempotency audit | BLOCKED | Human owner will manually induce crashes during `fs.delete` and `fs.append` and verify zero double effects before merge. Harness provided at `scripts/manual-audit/phase5b-crash-audit.mjs`. |
-| Manual safety audit | BLOCKED | Not yet run manually. Harness provided at `scripts/manual-audit/phase5b-safety-audit.mjs` with 50 malicious `shell.exec` inputs. Automated coverage now includes the same denial classes: injection, pipe-to-shell, destructive filesystem, exfiltration, privilege escalation, path traversal, argv variants, and workspace scope. |
+| Manual idempotency audit | DONE | Human owner ran `scripts/manual-audit/phase5b-crash-audit.mjs` against fresh daemon PID `58830`, commit `6d3e279`, dist mtime `2026-04-30T01:33:11.545Z`. Crash audit output: 3/3 PASS. Verified `fs.delete` same-key retry deleted target exactly once, `fs.append` same-key retry produced `hello\n` exactly once, and consumed single-use `shell.run` approval crash required fresh approval on retry. |
+| Manual safety audit | DONE | Human owner ran `scripts/manual-audit/phase5b-safety-audit.mjs` against fresh daemon PID `58830`, commit `6d3e279`, dist mtime `2026-04-30T01:33:11.545Z`. Safety audit output: 50/50 PASS; all malicious `shell.exec` inputs were denied before execution. |
 | Coverage for tool execution + safety + idempotency modules >= 90% | DONE locally | `npm run test:coverage -w @operator-dock/daemon` passed. `tools/runtime` coverage: 92.75% statements / 85.5% branches / 93.22% functions / 92.75% lines. Report path: `apps/daemon/coverage/index.html`. |
 
 ## Implementation Summary
@@ -47,6 +46,9 @@ below have CI and manual-audit evidence. The PR remains Draft.
 - Hardened shell forbidden predicates to cover command-string and argv
   variants for injection, pipe-to-shell, destructive file operations,
   exfiltration, privilege escalation, and path traversal.
+- Added daemon build metadata to `/health` and a fail-fast manual-audit
+  staleness check so audits abort if the Mac app is supervising an older
+  daemon build.
 
 ## Files Changed
 
@@ -105,13 +107,24 @@ Docs:
   - Daemon: 71 tests.
   - SwiftPM: 11 tests.
 
+## Manual Verification
+
+- Audited daemon: PID `58830`, commit `6d3e279`, dist mtime
+  `2026-04-30T01:33:11.545Z`.
+- Crash audit run output: 3/3 PASS.
+  - `fs.delete` crash + same-key retry deleted target exactly once.
+  - `fs.append` crash + same-key retry produced `hello\n` exactly once.
+  - `shell.run` consumed approval crash + retry required fresh approval.
+- Safety audit run output: 50/50 PASS.
+  - All malicious `shell.exec` inputs were denied before execution.
+
 ## CI Evidence
 
 - Previous checkpoint was pushed to `origin/phase-5b/tool-execution-safety`.
 - Previous implementation verification commit:
   `c97a1dd8714ebf301c3d5f401347a12927e35fe6`.
 - Latest local verification commit:
-  `7d2249f9722d701dfe41aa88fb599eb1e8a3340b`.
+  `6d3e279802530544767e1074e2a6c0ae378d3d32`.
 - CI evidence checkpoint:
   `8431512e8a359bf77afb573887bc04c3ac1a9785`.
 - Workflow: `Phase 5B Tool Execution`.
@@ -124,21 +137,23 @@ Docs:
   - Phase 5B Tool Execution: https://github.com/perlantir/hipp0mac/actions/runs/25141588265
   - Phase 5A Node Persistence: https://github.com/perlantir/hipp0mac/actions/runs/25141588258
 
+Latest audit-harness/staleness-check commit `6d3e279802530544767e1074e2a6c0ae378d3d32`
+also passed GitHub Actions:
+
+- Phase 5B push: https://github.com/perlantir/hipp0mac/actions/runs/25142683655
+- Phase 5B PR: https://github.com/perlantir/hipp0mac/actions/runs/25142684577
+- Phase 5A PR: https://github.com/perlantir/hipp0mac/actions/runs/25142684572
+
 Earlier CI failure recorded and fixed:
 
 - https://github.com/perlantir/hipp0mac/actions/runs/25139068498/attempts/3 failed in the existing Swift supervisor crash-recovery test because the replacement daemon could be killed by an aggressive 0.2s startup grace / single failed health check on a busy macOS runner. Commit `fed58f1a262206f36b28e98b18302a4feaa4b9ff` hardened the test configuration to allow a 2s startup grace and 3 failed health checks before respawn.
 
 ## Known Risks
 
-- Manual idempotency and safety audits are still pending human execution.
-  The harnesses are implemented but the live crash/safety audit evidence
-  must still be collected by the human owner before merge.
 - The orphan soak is CI-scaled by default; the full 10,000-call stress run
   can be exercised by raising `PHASE5B_ORPHAN_SOAK_CALLS`.
 
 ## Carry Forward
 
-- Human owner to complete manual idempotency and safety audit evidence
-  before declaring Phase 5B done.
-- Manual audit evidence remains the only owner-side gate evidence still
-  pending before declaring Phase 5B complete.
+- Phase 5C must not start until the human owner merges this Phase 5B PR
+  and explicitly authorizes the next phase.
