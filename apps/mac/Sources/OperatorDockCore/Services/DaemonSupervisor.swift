@@ -49,6 +49,26 @@ public final class DaemonSupervisor: @unchecked Sendable {
     public var logRotationBytes: UInt64
     public var logRotationCount: Int
 
+    enum CodingKeys: String, CodingKey {
+      case executablePath
+      case arguments
+      case environment
+      case workingDirectory
+      case respawnDelaySeconds
+      case maxRespawnDelaySeconds
+      case watchdogIntervalSeconds
+      case healthTimeoutSeconds
+      case startupGraceSeconds
+      case healthFailureThreshold
+      case maxRestartFailures
+      case restartFailureWindowSeconds
+      case healthURLString
+      case healthBearerToken
+      case logFilePath
+      case logRotationBytes
+      case logRotationCount
+    }
+
     public init(
       executablePath: String,
       arguments: [String] = [],
@@ -85,6 +105,29 @@ public final class DaemonSupervisor: @unchecked Sendable {
       self.logFilePath = logFilePath
       self.logRotationBytes = max(1, logRotationBytes)
       self.logRotationCount = max(1, logRotationCount)
+    }
+
+    public init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      try self.init(
+        executablePath: container.decode(String.self, forKey: .executablePath),
+        arguments: container.decodeIfPresent([String].self, forKey: .arguments) ?? [],
+        environment: container.decodeIfPresent([String: String].self, forKey: .environment) ?? [:],
+        workingDirectory: container.decodeIfPresent(String.self, forKey: .workingDirectory),
+        respawnDelaySeconds: container.decodeIfPresent(TimeInterval.self, forKey: .respawnDelaySeconds) ?? 1.0,
+        maxRespawnDelaySeconds: container.decodeIfPresent(TimeInterval.self, forKey: .maxRespawnDelaySeconds) ?? 30.0,
+        watchdogIntervalSeconds: container.decodeIfPresent(TimeInterval.self, forKey: .watchdogIntervalSeconds) ?? 2.0,
+        healthTimeoutSeconds: container.decodeIfPresent(TimeInterval.self, forKey: .healthTimeoutSeconds) ?? 1.0,
+        startupGraceSeconds: container.decodeIfPresent(TimeInterval.self, forKey: .startupGraceSeconds) ?? 60.0,
+        healthFailureThreshold: container.decodeIfPresent(Int.self, forKey: .healthFailureThreshold) ?? 5,
+        maxRestartFailures: container.decodeIfPresent(Int.self, forKey: .maxRestartFailures) ?? 10,
+        restartFailureWindowSeconds: container.decodeIfPresent(TimeInterval.self, forKey: .restartFailureWindowSeconds) ?? 300.0,
+        healthURLString: container.decodeIfPresent(String.self, forKey: .healthURLString),
+        healthBearerToken: container.decodeIfPresent(String.self, forKey: .healthBearerToken),
+        logFilePath: container.decodeIfPresent(String.self, forKey: .logFilePath) ?? DaemonSupervisor.defaultLogFilePath,
+        logRotationBytes: container.decodeIfPresent(UInt64.self, forKey: .logRotationBytes) ?? 10 * 1024 * 1024,
+        logRotationCount: container.decodeIfPresent(Int.self, forKey: .logRotationCount) ?? 5
+      )
     }
 
     public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Configuration? {

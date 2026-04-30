@@ -3,6 +3,40 @@ import XCTest
 @testable import OperatorDockCore
 
 final class DaemonSupervisorTests: XCTestCase {
+  func testConfigurationDecodesOldBundleShapeWithNewDefaults() throws {
+    let legacyJSON = """
+    {
+      "executablePath": "/usr/bin/env",
+      "arguments": ["node", "/tmp/operator-dock-daemon/index.js"],
+      "environment": {
+        "OPERATOR_DOCK_HOST": "127.0.0.1",
+        "OPERATOR_DOCK_PORT": "4768"
+      },
+      "workingDirectory": "/tmp/operator-dock",
+      "respawnDelaySeconds": 0.5,
+      "watchdogIntervalSeconds": 2,
+      "healthTimeoutSeconds": 1,
+      "startupGraceSeconds": 3,
+      "healthFailureThreshold": 1,
+      "healthURLString": "http://127.0.0.1:4768/health"
+    }
+    """
+
+    let config = try JSONDecoder().decode(
+      DaemonSupervisor.Configuration.self,
+      from: Data(legacyJSON.utf8)
+    )
+
+    XCTAssertEqual(config.executablePath, "/usr/bin/env")
+    XCTAssertEqual(config.environment["OPERATOR_DOCK_PORT"], "4768")
+    XCTAssertEqual(config.maxRespawnDelaySeconds, 30)
+    XCTAssertEqual(config.maxRestartFailures, 10)
+    XCTAssertEqual(config.restartFailureWindowSeconds, 300)
+    XCTAssertEqual(config.logFilePath, DaemonSupervisor.defaultLogFilePath)
+    XCTAssertEqual(config.logRotationBytes, 10 * 1024 * 1024)
+    XCTAssertEqual(config.logRotationCount, 5)
+  }
+
   func testSupervisorCapturesDaemonStreamsToRotatingLog() async throws {
     let tempRoot = FileManager.default.temporaryDirectory
       .appendingPathComponent("operator-dock-log-\(UUID().uuidString)", isDirectory: true)
