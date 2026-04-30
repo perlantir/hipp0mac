@@ -3,7 +3,8 @@
 Date: 2026-04-29<br>
 Branch: `phase-5b/tool-execution-safety`<br>
 PR: https://github.com/perlantir/hipp0mac/pull/1<br>
-Local verification: pending new commit for fs retrofit / crash harness work
+Implementation/local verification commit:
+`a109dbed5d74fe00a59949980966f5b8d19dbb89`
 
 Status: `In Review`. This draft records the current implementation
 checkpoint. Phase 5B is not complete until the remaining gate criteria
