@@ -15,11 +15,14 @@ to:
 They restore the previous workspace at the end unless `--keep-workspace`
 is supplied.
 
-## Prerequisites
+## Before You Run
 
-1. Open the Operator Dock Mac app so `DaemonSupervisor` owns the Node
+1. Relaunch the Operator Dock Mac app after any rebuild, branch update,
+   or `dist/` change so `DaemonSupervisor` starts a fresh daemon from the
+   current build.
+2. Open the Operator Dock Mac app so `DaemonSupervisor` owns the Node
    daemon.
-2. Confirm the daemon is healthy:
+3. Confirm the daemon is healthy:
 
 ```sh
 curl -sS http://127.0.0.1:4768/health \
